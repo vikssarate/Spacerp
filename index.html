@@ -189,23 +189,26 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 </footer>
 
 <script>
+/*** Local-time date helpers (Safari-safe) ***/
+const pad2 = n => String(n).padStart(2,"0");
+const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+function parseYMD(str){ const [Y,M,D]=str.split("-").map(Number); return new Date(Y, M-1, D); }
+function startOfDay(d){ const x=new Date(d); x.setHours(0,0,0,0); return x }
+function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x }
+function isSameDay(a,b){ return startOfDay(a).getTime()===startOfDay(b).getTime() }
+function ym(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}` }
+function monthMeta(ymStr){ const [Y,M]=ymStr.split("-").map(Number); const first=new Date(Y,M-1,1); return {Y,M,startW:first.getDay(),days:new Date(Y,M,0).getDate()} }
+function ymdhm(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}` }
+
 /*** Data model ***/
 // topic: { id, title, tags[], ef, reps, interval, dueISO, lastISO, defaultTime, history[], future[] }
-const SK = "sr.topics.v3";
+const SK = "sr.topics.v4";
 let topics = load();
 function load(){ try{ const t=JSON.parse(localStorage.getItem(SK)); return Array.isArray(t)?t:[] }catch(e){ return [] } }
 function save(){ localStorage.setItem(SK, JSON.stringify(topics)) }
 
 const $ = q => document.querySelector(q);
 const today = () => new Date();
-const pad2 = n => String(n).padStart(2,"0");
-const ymd = d => d.toISOString().slice(0,10);
-const ymdhm = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-function startOfDay(d){ const x=new Date(d); x.setHours(0,0,0,0); return x }
-function isSameDay(a,b){ return startOfDay(a).getTime()===startOfDay(b).getTime() }
-function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x }
-function monthMeta(ymStr){ const [Y,M]=ymStr.split("-").map(Number); const first=new Date(Y,M-1,1); return {Y,M,startW:first.getDay(),days:new Date(Y,M,0).getDate()} }
-function ym(d){ return d.toISOString().slice(0,7) }
 
 /*** SM-2 scheduling ***/
 function nextIntervalSM2(t, q){
@@ -244,7 +247,6 @@ $("#addTopic").addEventListener("click", ()=>{
   addTopic(title, tags, $("#tStart").value, $("#tTime").value);
   $("#tTitle").value=""; $("#tTags").value="";
 });
-
 function renderTopics(){
   const box=$("#topics"); box.innerHTML="";
   for (const t of topics){
@@ -261,7 +263,7 @@ function renderTopics(){
   }
 }
 
-/*** Planner core ***/
+/*** Planner ***/
 const monthPick = { value: ym(today()) };
 function planInfoUpdate(){
   const id=$("#planTopic").value;
@@ -274,12 +276,13 @@ function refreshPlanner(){
   sel.innerHTML = topics.map(t=>`<option value="${t.id}">${t.title}</option>`).join("");
   if (topics.length && (!cur || !topics.some(t=>t.id===cur))) sel.value=topics[0].id;
   else sel.value=cur;
-  // set default dates
-  const now = today();
-  if (!$("#rangeStart").value) $("#rangeStart").value = ymd(now);
-  if (!$("#rangeEnd").value)   $("#rangeEnd").value   = ymd(addDays(now,30));
-  if (!$("#everyStart").value) $("#everyStart").value = ymd(now);
-  if (!$("#everyEnd").value)   $("#everyEnd").value   = ymd(addDays(now,30));
+  // set default dates synced to viewed month
+  const {Y,M,days}=monthMeta(monthPick.value);
+  const start = new Date(Y,M-1,1), end=new Date(Y,M-1,days);
+  if (!$("#rangeStart").value) $("#rangeStart").value = ymd(start);
+  if (!$("#rangeEnd").value)   $("#rangeEnd").value   = ymd(end);
+  if (!$("#everyStart").value) $("#everyStart").value = ymd(start);
+  if (!$("#everyEnd").value)   $("#everyEnd").value   = ymd(end);
   // default weekdays: Mon-Fri
   document.querySelectorAll('.wd').forEach(cb=>{
     if ([1,2,3,4,5].includes(+cb.dataset.wd)) cb.checked ??= true;
@@ -287,12 +290,12 @@ function refreshPlanner(){
   planInfoUpdate();
 }
 $("#planTopic").addEventListener("change", planInfoUpdate);
-function selectedWeekdays(){ return Array.from(document.querySelectorAll(".wd:checked")).map(cb=>+cb.dataset.wd); }
 
+function selectedWeekdays(){ return Array.from(document.querySelectorAll(".wd:checked")).map(cb=>+cb.dataset.wd); }
 function isoFromDateTime(dateStr, hhmm){
-  const [Y,M,D]=dateStr.split("-").map(Number);
+  const d=parseYMD(dateStr);
   const [hh,mm]=(hhmm||"19:00").split(":").map(Number);
-  const d=new Date(Y, (M-1), D, hh, mm, 0, 0);
+  d.setHours(hh,mm,0,0);
   return d.toISOString();
 }
 function addFutureDates(topicId, dateStrs, hhmm){
@@ -306,39 +309,39 @@ function addFutureDates(topicId, dateStrs, hhmm){
   save(); renderAll();
 }
 function datesWeekdaysInMonth(ymStr, weekdays){
-  const {days}=monthMeta(ymStr); const out=[];
+  const {Y,M,days}=monthMeta(ymStr); const out=[];
   for (let d=1; d<=days; d++){
-    const ds=`${ymStr}-${pad2(d)}`; const dow=new Date(ds).getDay();
-    if (weekdays.includes(dow)) out.push(ds);
+    const date = new Date(Y,M-1,d);
+    if (weekdays.includes(date.getDay())) out.push(ymd(date));
   }
   return out;
 }
 function datesWeekdaysBetween(startStr,endStr,weekdays){
-  const out=[]; let d=new Date(startStr);
-  const end=new Date(endStr); end.setHours(23,59,59,999);
+  const out=[]; let d=parseYMD(startStr);
+  const end=parseYMD(endStr); end.setHours(23,59,59,999);
   while (d<=end){ if (weekdays.includes(d.getDay())) out.push(ymd(d)); d=addDays(d,1); }
   return out;
 }
 function datesEveryNDays(startStr,endStr,step){
-  const out=[]; let d=new Date(startStr);
-  const end=new Date(endStr); end.setHours(23,59,59,999);
+  const out=[]; let d=parseYMD(startStr);
+  const end=parseYMD(endStr); end.setHours(23,59,59,999);
   while (d<=end){ out.push(ymd(d)); d=addDays(d, Math.max(1,step)); }
   return out;
 }
 
-/*** Month planning buttons ***/
+/*** Bulk month planning ***/
 $("#planThisMonth").addEventListener("click", ()=>{
   const ymStr = monthPick.value;
-  const {days}=monthMeta(ymStr);
-  const all = Array.from({length:days},(_,i)=>`${ymStr}-${pad2(i+1)}`);
+  const {Y,M,days}=monthMeta(ymStr);
+  const all = Array.from({length:days},(_,i)=> ymd(new Date(Y,M-1,i+1)) );
   addFutureDates($("#planTopic").value, all, $("#planTime").value);
 });
 $("#planNextMonth").addEventListener("click", ()=>{
   const [Y,M]=monthPick.value.split("-").map(Number);
   const next = new Date(Y, M, 1);
   const ymStr = ym(next);
-  const {days}=monthMeta(ymStr);
-  const all = Array.from({length:days},(_,i)=>`${ymStr}-${pad2(i+1)}`);
+  const {Y:YY,M:MM,days}=monthMeta(ymStr);
+  const all = Array.from({length:days},(_,i)=> ymd(new Date(YY,MM-1,i+1)) );
   addFutureDates($("#planTopic").value, all, $("#planTime").value);
 });
 $("#planClear").addEventListener("click", ()=>{
@@ -346,7 +349,7 @@ $("#planClear").addEventListener("click", ()=>{
   if (t && confirm(`Remove all planned recalls for "${t.title}"?`)){ t.future=[]; save(); renderAll(); }
 });
 
-/*** Weekday planning buttons ***/
+/*** Weekday planning ***/
 $("#planWeekdaysThis").addEventListener("click", ()=>{
   const days = datesWeekdaysInMonth(monthPick.value, selectedWeekdays());
   addFutureDates($("#planTopic").value, days, $("#planTime").value);
@@ -427,12 +430,13 @@ function renderCalendar(){
   let due=0, late=0, done=0, streak=0, curStreak=0, lastHadReview=null;
 
   for(let d=1; d<=days; d++){
-    const key = `${mval}-${pad2(d)}`;
+    const dateObj = new Date(Y,M-1,d);
+    const key = ymd(dateObj);
     const cell=document.createElement("div"); cell.className="day";
     cell.innerHTML=`<div class="dnum">${d}</div><div class="count" id="c-${key}">·</div>`;
     cal.appendChild(cell);
 
-    const start = new Date(key+"T00:00:00");
+    const start = startOfDay(dateObj);
     const end   = addDays(start,1);
 
     let dueN = 0, lateN = 0;
@@ -454,7 +458,9 @@ function renderCalendar(){
     cell.addEventListener("click", ()=>{
       if (!$("#planMode").checked) return;
       const tid=$("#planTopic").value; if (!tid) return;
-      toggleFutureForDate(tid, key, $("#planTime").value);
+      const hhmm=$("#planTime").value;
+      const dstr = ymd(dateObj);
+      toggleFutureForDate(tid, dstr, hhmm);
     });
 
     const had = topics.some(t => (t.history||[]).some(h=> {
@@ -469,11 +475,11 @@ function renderCalendar(){
   $("#statDue").textContent = due;
   $("#streak").textContent = streak;
 
-  const mStart = new Date(`${mval}-01T00:00:00`), mEnd= addDays(new Date(`${mval}-${pad2(days)}T00:00:00`),1);
+  const mStart = new Date(Y,M-1,1), mEnd= addDays(new Date(Y,M-1,days),1);
   for (const t of topics) done += (t.history||[]).filter(h=>{ const ts=new Date(h.ts); return ts>=mStart && ts<mEnd; }).length;
   $("#statDone").textContent = done;
 
-  refreshPlanner();
+  refreshPlanner(); // sync planner’s default ranges to viewed month
 }
 function toggleFutureForDate(topicId, dateStr, hhmm){
   const t=topicById(topicId); if(!t) return; ensureFields(t);
@@ -507,10 +513,10 @@ document.getElementById("importJson").addEventListener("change",(e)=>{
   }catch(_){ alert("Invalid JSON") } }; r.readAsText(f);
 });
 
-/*** ICS export (auto + planned for ~70 days, each with a 10-minute alert) ***/
+/*** ICS export (auto + planned for ~90 days, each with a 10-minute alert) ***/
 $("#exportIcs").addEventListener("click", ()=>{
   const lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//SpaceRepetition//EN"];
-  const now = new Date(), horizon = addDays(now, 70);
+  const now = new Date(), horizon = addDays(now, 90);
   const pushEvent = (uid, when, title, tags=[])=>{
     const dt = when.toISOString().replace(/[-:]/g,"").split(".")[0]+"Z";
     lines.push(
@@ -544,11 +550,35 @@ $("#exportIcs").addEventListener("click", ()=>{
 function renderAll(){ renderQueue(); renderTopics(); renderCalendar(); }
 function renderQueue(){
   const q = $("#queue"); q.innerHTML="";
-  const items = dueToday();
+  const items = (function(){
+    const items=[]; const now=today(), end=addDays(startOfDay(now),1);
+    for (const t of topics){
+      ensureFields(t);
+      if (new Date(t.dueISO) < end) items.push({kind:"auto", t, due:new Date(t.dueISO)});
+      (t.future||[]).forEach((f,idx)=>{ const d=new Date(f.iso); if (d < end) items.push({kind:"manual", t, due:d, index:idx}); });
+    }
+    return items.sort((a,b)=> a.due-b.due);
+  })();
   $("#dueCount").textContent = items.length;
-  $("#todayStr").textContent = (new Date()).toLocaleDateString(undefined,{weekday:"short",year:"numeric",month:"short",day:"numeric"});
+  $("#todayStr").textContent = today().toLocaleDateString(undefined,{weekday:"short",year:"numeric",month:"short",day:"numeric"});
   if(!items.length){ q.innerHTML=`<div class="muted">Nothing due today 🎉</div>`; return; }
-  items.forEach(it=> q.appendChild(queueItem(it)));
+  items.forEach(it=> q.appendChild((function(it){
+    const wrap=document.createElement("div"); wrap.className="queueitem"; 
+    wrap.innerHTML=`<div>
+      <div><b>${it.t.title}</b> <span class="small muted">${it.kind==="manual" ? "planned" : "auto"}</span></div>
+      <div class="small muted">due ${ymdhm(it.due)}</div>
+    </div>
+    <div class="qbtns">
+      <button data-q="0">Again</button>
+      <button data-q="3">Hard</button>
+      <button data-q="4">Good</button>
+      <button data-q="5">Easy</button>
+    </div>`;
+    wrap.querySelectorAll("button").forEach(btn=>{
+      btn.addEventListener("click", ()=> grade(it, +btn.dataset.q));
+    });
+    return wrap;
+  })(it)));
 }
 renderAll();
 </script>
