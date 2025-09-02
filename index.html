@@ -21,7 +21,7 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 .summary{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:8px}
 .big{font-size:28px;font-weight:700}.pill{background:#12162a;border:1px solid var(--line);border-radius:999px;padding:10px 12px;display:inline-flex;gap:8px}
 .badge{padding:4px 8px;border-radius:20px;border:1px solid var(--line);font-size:12px}
-.badge.due{border-color:#ffd166}.badge.late{border-color:#ff7575}.badge.ok{border-color:#7bd88f}
+.badge.due{border-color:#ffd166}.badge.late{border-color:#ff7575}.badge.ok{border-color:var(--ok)}
 .topicrow{display:grid;grid-template-columns:1fr 100px 100px 1fr 90px;gap:8px;align-items:center;margin-bottom:6px}
 .queueitem{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);padding:10px;border-radius:10px}
 .qbtns button{min-width:64px}
@@ -32,6 +32,8 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 .iconbtn{padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:#12162a;color:var(--ink);font-size:12px}
 .iconbtn.small{padding:4px 8px}
 .iconbtn.danger{border-color:var(--bad);color:var(--bad)}
+/* new */
+.linkbtn{background:none;border:none;color:var(--accent);text-decoration:underline;cursor:pointer;padding:0;font:inherit}
 </style>
 </head>
 <body>
@@ -134,6 +136,15 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
         <input type="checkbox" id="planMode"/>
         <label for="planMode" class="small muted">Plan Mode: tap days on the calendar to toggle a recall for the selected topic at the chosen time</label>
       </div>
+
+      <!-- NEW: Reschedule Mode -->
+      <div class="row">
+        <input type="checkbox" id="reschedMode"/>
+        <label for="reschedMode" class="small muted">
+          Reschedule Mode (focused topic): tap a calendar day to move its next due to that date at the chosen time
+        </label>
+      </div>
+
       <div class="small muted" id="planInfo"></div>
     </details>
 
@@ -160,6 +171,8 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
         <button id="prevM">◀</button>
         <div id="monthTitle" style="font-weight:700"></div>
         <button id="nextM">▶</button>
+        <!-- NEW: focus chip -->
+        <span id="focusChip" class="pill" style="display:none"></span>
       </div>
       <div class="row">
         <span class="pill"><span>Due</span><b id="mDue">0</b></span>
@@ -206,9 +219,9 @@ function ymdhm(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.g
 
 /*** Data model ***/
 // topic: { id, title, tags[], ef, reps, interval, dueISO, lastISO, defaultTime, history[], future[] }
-const SK = "sr.topics.v4";
+const SK = "sr.topics.v5";
 let topics = load();
-function load(){ try{ const t=JSON.parse(localStorage.getItem(SK)); return Array.isArray(t)?t:[] }catch(e){ return [] } }
+function load(){ try{ const t=JSON.parse(localStorage.getItem(SK))||JSON.parse(localStorage.getItem("sr.topics.v4"))||[]; return Array.isArray(t)?t:[] }catch(e){ return [] } }
 function save(){ localStorage.setItem(SK, JSON.stringify(topics)) }
 
 const $ = q => document.querySelector(q);
@@ -244,14 +257,6 @@ function addTopic(title, tags, startWhen, defaultTime){
 }
 const topicById = id => topics.find(t=>t.id===id);
 
-/*** UI: Add & list ***/
-$("#addTopic").addEventListener("click", ()=>{
-  const title=$("#tTitle").value.trim(); if(!title) return;
-  const tags=$("#tTags").value.split(",").map(s=>s.trim()).filter(Boolean);
-  addTopic(title, tags, $("#tStart").value, $("#tTime").value);
-  $("#tTitle").value=""; $("#tTags").value="";
-});
-
 function deleteTopic(id){
   const t = topicById(id);
   if (!t) return;
@@ -259,6 +264,35 @@ function deleteTopic(id){
   topics = topics.filter(x=>x.id!==id);
   save(); renderAll();
 }
+
+/*** Focus (Topic Focus + chip) ***/
+let focusTopicId = null;
+function setFocus(id){
+  focusTopicId = (focusTopicId === id ? null : id);
+  renderAll();
+}
+function focusedTopics(){ return focusTopicId ? topics.filter(t=>t.id===focusTopicId) : topics; }
+function updateFocusChip(){
+  const chip = document.getElementById('focusChip');
+  if (!chip) return;
+  if (!focusTopicId){
+    chip.style.display = 'none';
+    chip.innerHTML = '';
+    return;
+  }
+  const t = topicById(focusTopicId);
+  chip.style.display = 'inline-flex';
+  chip.innerHTML = `🔎 ${t ? t.title : 'Topic'} <button class="linkbtn" id="clearFocus">Clear</button>`;
+  chip.querySelector('#clearFocus').onclick = () => setFocus(null);
+}
+
+/*** UI: Add & list ***/
+$("#addTopic").addEventListener("click", ()=>{
+  const title=$("#tTitle").value.trim(); if(!title) return;
+  const tags=$("#tTags").value.split(",").map(s=>s.trim()).filter(Boolean);
+  addTopic(title, tags, $("#tStart").value, $("#tTime").value);
+  $("#tTitle").value=""; $("#tTags").value="";
+});
 
 function renderTopics(){
   const box=$("#topics"); box.innerHTML="";
@@ -268,12 +302,16 @@ function renderTopics(){
     const row = document.createElement("div");
     row.className="topicrow";
     row.innerHTML = `
-      <div><b>${t.title}</b> <span class="small muted">${(t.tags||[]).join(", ")}</span></div>
+      <div>
+        <button class="linkbtn focusTopic" data-id="${t.id}">${t.title}</button>
+        <span class="small muted">${(t.tags||[]).join(", ")}</span>
+      </div>
       <div class="small">EF ${t.ef.toFixed(2)}</div>
       <div class="small">${t.reps} reps</div>
       <div class="small">${ymdhm(next)}</div>
       <div class="right"><button class="iconbtn danger small" data-del="${t.id}">🗑 Delete</button></div>`;
     row.querySelector('[data-del]').addEventListener('click',()=>deleteTopic(t.id));
+    row.querySelector('.focusTopic').addEventListener('click',()=>setFocus(t.id));
     box.appendChild(row);
   }
 }
@@ -291,6 +329,9 @@ function refreshPlanner(){
   sel.innerHTML = topics.map(t=>`<option value="${t.id}">${t.title}</option>`).join("");
   if (topics.length && (!cur || !topics.some(t=>t.id===cur))) sel.value=topics[0]?.id || "";
   else sel.value=cur || "";
+  // lock to focused topic
+  if (focusTopicId && topics.some(t=>t.id===focusTopicId)){ sel.value = focusTopicId; sel.disabled = true; }
+  else { sel.disabled = false; }
   // set default dates synced to viewed month
   const {Y,M,days}=monthMeta(monthPick.value);
   const start = new Date(Y,M-1,1), end=new Date(Y,M-1,days);
@@ -390,7 +431,7 @@ $("#planEveryN").addEventListener("click", ()=>{
 /*** Review queue (auto + planned) ***/
 function dueToday(){
   const items=[]; const now=today(), end=addDays(startOfDay(now),1);
-  for (const t of topics){
+  for (const t of focusedTopics()){
     ensureFields(t);
     if (new Date(t.dueISO) < end) items.push({kind:"auto", t, due:new Date(t.dueISO)});
     (t.future||[]).forEach((f,idx)=>{ const d=new Date(f.iso); if (d < end) items.push({kind:"manual", t, due:d, index:idx}); });
@@ -401,7 +442,10 @@ function queueItem(item){
   const t=item.t;
   const wrap=document.createElement("div"); wrap.className="queueitem"; 
   wrap.innerHTML=`<div>
-    <div><b>${t.title}</b> <span class="small muted">${item.kind==="manual" ? "planned" : "auto"}</span></div>
+    <div>
+      <button class="linkbtn" data-focus="${t.id}">${t.title}</button>
+      <span class="small muted">${item.kind==="manual" ? "planned" : "auto"}</span>
+    </div>
     <div class="small muted">due ${ymdhm(item.due)}</div>
     <div class="small"><button class="iconbtn danger small" data-del-topic="${t.id}">🗑 Delete topic</button></div>
   </div>
@@ -415,6 +459,7 @@ function queueItem(item){
     btn.addEventListener("click", ()=> grade(item, +btn.dataset.q));
   });
   wrap.querySelector('[data-del-topic]')?.addEventListener('click', ()=> deleteTopic(t.id));
+  wrap.querySelector('[data-focus]').addEventListener('click', ()=> setFocus(t.id));
   return wrap;
 }
 function grade(item, q){
@@ -433,6 +478,13 @@ function grade(item, q){
     item.t.future = item.t.future.filter(x=>x.iso!==iso);
   }
   t.history = t.history || []; t.history.push({ts: t.lastISO, q});
+  save(); renderAll();
+}
+
+/*** Reschedule helper ***/
+function rescheduleDueToDate(topicId, dateStr, hhmm){
+  const t = topicById(topicId); if (!t) return;
+  t.dueISO = isoFromDateTime(dateStr, hhmm || t.defaultTime);
   save(); renderAll();
 }
 
@@ -457,7 +509,7 @@ function renderCalendar(){
     const end   = addDays(start,1);
 
     let dueN = 0, lateN = 0;
-    for (const t of topics){
+    for (const t of focusedTopics()){
       const autoDue = new Date(t.dueISO);
       if (autoDue >= start && autoDue < end) dueN += 1;
       if (autoDue < start) lateN += 1;
@@ -473,14 +525,23 @@ function renderCalendar(){
     if (lateN>0) late = lateN;
 
     cell.addEventListener("click", ()=>{
-      if (!$("#planMode").checked) return;
-      const tid=$("#planTopic").value; if (!tid) return;
-      const hhmm=$("#planTime").value;
       const dstr = ymd(dateObj);
-      toggleFutureForDate(tid, dstr, hhmm);
+      const hhmm = $("#planTime").value;
+
+      // If reschedule mode and a topic is focused → move its next due
+      if ($("#reschedMode").checked && focusTopicId){
+        rescheduleDueToDate(focusTopicId, dstr, hhmm);
+        return;
+      }
+
+      // If plan mode → toggle planned for focused OR selected topic
+      if ($("#planMode").checked){
+        const tid = focusTopicId || $("#planTopic").value; if (!tid) return;
+        toggleFutureForDate(tid, dstr, hhmm);
+      }
     });
 
-    const had = topics.some(t => (t.history||[]).some(h=> {
+    const had = focusedTopics().some(t => (t.history||[]).some(h=> {
       const ts=new Date(h.ts); return ts>=start && ts<end;
     }));
     if (had){ curStreak = (lastHadReview && isSameDay(addDays(lastHadReview,1), start)) ? curStreak+1 : 1; lastHadReview = start; }
@@ -493,10 +554,11 @@ function renderCalendar(){
   $("#streak").textContent = streak;
 
   const mStart = new Date(Y,M-1,1), mEnd= addDays(new Date(Y,M-1,days),1);
-  for (const t of topics) done += (t.history||[]).filter(h=>{ const ts=new Date(h.ts); return ts>=mStart && ts<mEnd; }).length;
+  for (const t of focusedTopics()) done += (t.history||[]).filter(h=>{ const ts=new Date(h.ts); return ts>=mStart && ts<mEnd; }).length;
   $("#statDone").textContent = done;
 
-  refreshPlanner(); // sync planner’s default ranges to viewed month
+  refreshPlanner();      // sync planner to viewed month and focus
+  updateFocusChip();     // show/refresh the focus chip
 }
 function toggleFutureForDate(topicId, dateStr, hhmm){
   const t=topicById(topicId); if(!t) return; ensureFields(t);
