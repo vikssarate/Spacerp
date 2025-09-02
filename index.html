@@ -22,13 +22,16 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 .big{font-size:28px;font-weight:700}.pill{background:#12162a;border:1px solid var(--line);border-radius:999px;padding:10px 12px;display:inline-flex;gap:8px}
 .badge{padding:4px 8px;border-radius:20px;border:1px solid var(--line);font-size:12px}
 .badge.due{border-color:#ffd166}.badge.late{border-color:#ff7575}.badge.ok{border-color:#7bd88f}
-.topicrow{display:grid;grid-template-columns:1fr 100px 100px 1fr;gap:8px;align-items:center;margin-bottom:6px}
+.topicrow{display:grid;grid-template-columns:1fr 100px 100px 1fr 90px;gap:8px;align-items:center;margin-bottom:6px}
 .queueitem{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);padding:10px;border-radius:10px}
 .qbtns button{min-width:64px}
 .small{font-size:12px}
 .labelish{color:#9aa3c7;font-size:12px}
 .weekgrid{display:grid;grid-template-columns:repeat(7,auto);gap:8px;align-items:center}
 .weekgrid label{font-size:12px;color:var(--muted)}
+.iconbtn{padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:#12162a;color:var(--ink);font-size:12px}
+.iconbtn.small{padding:4px 8px}
+.iconbtn.danger{border-color:var(--bad);color:var(--bad)}
 </style>
 </head>
 <body>
@@ -38,9 +41,8 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
     <button id="exportJson">Export JSON</button>
     <label for="importJson" class="labelish" style="text-decoration:underline;cursor:pointer">Import</label>
     <input id="importJson" type="file" accept="application/json" style="display:none"/>
-    <button id="exportIcs" title="Export next due + planned occurrences to .ics with alerts">Export ICS</button>
-    <!-- NEW: live subscription feed -->
-    <button id="saveFeed" title="Save a subscribable feed file (upload as feed.ics to your Pages site)">Save feed.ics</button>
+    <button id="exportIcs" title="Export next due + planned (90d) to .ics with alerts">Export ICS</button>
+    <button id="saveFeed" title="Save feed.ics for live subscription">Save feed.ics</button>
   </div>
 </header>
 
@@ -249,6 +251,15 @@ $("#addTopic").addEventListener("click", ()=>{
   addTopic(title, tags, $("#tStart").value, $("#tTime").value);
   $("#tTitle").value=""; $("#tTags").value="";
 });
+
+function deleteTopic(id){
+  const t = topicById(id);
+  if (!t) return;
+  if (!confirm(`Delete topic "${t.title}"? This removes its history and any planned recalls.`)) return;
+  topics = topics.filter(x=>x.id!==id);
+  save(); renderAll();
+}
+
 function renderTopics(){
   const box=$("#topics"); box.innerHTML="";
   for (const t of topics){
@@ -260,7 +271,9 @@ function renderTopics(){
       <div><b>${t.title}</b> <span class="small muted">${(t.tags||[]).join(", ")}</span></div>
       <div class="small">EF ${t.ef.toFixed(2)}</div>
       <div class="small">${t.reps} reps</div>
-      <div class="small">${ymdhm(next)}</div>`;
+      <div class="small">${ymdhm(next)}</div>
+      <div class="right"><button class="iconbtn danger small" data-del="${t.id}">🗑 Delete</button></div>`;
+    row.querySelector('[data-del]').addEventListener('click',()=>deleteTopic(t.id));
     box.appendChild(row);
   }
 }
@@ -276,8 +289,8 @@ function planInfoUpdate(){
 function refreshPlanner(){
   const sel=$("#planTopic"); const cur=sel.value;
   sel.innerHTML = topics.map(t=>`<option value="${t.id}">${t.title}</option>`).join("");
-  if (topics.length && (!cur || !topics.some(t=>t.id===cur))) sel.value=topics[0].id;
-  else sel.value=cur;
+  if (topics.length && (!cur || !topics.some(t=>t.id===cur))) sel.value=topics[0]?.id || "";
+  else sel.value=cur || "";
   // set default dates synced to viewed month
   const {Y,M,days}=monthMeta(monthPick.value);
   const start = new Date(Y,M-1,1), end=new Date(Y,M-1,days);
@@ -285,9 +298,9 @@ function refreshPlanner(){
   if (!$("#rangeEnd").value)   $("#rangeEnd").value   = ymd(end);
   if (!$("#everyStart").value) $("#everyStart").value = ymd(start);
   if (!$("#everyEnd").value)   $("#everyEnd").value   = ymd(end);
-  // default weekdays: Mon-Fri
+  // default weekdays: Mon-Fri (only on first load)
   document.querySelectorAll('.wd').forEach(cb=>{
-    if ([1,2,3,4,5].includes(+cb.dataset.wd)) cb.checked ??= true;
+    if ([1,2,3,4,5].includes(+cb.dataset.wd) && cb.getAttribute('data-init')!=='1'){ cb.checked = true; cb.setAttribute('data-init','1'); }
   });
   planInfoUpdate();
 }
@@ -390,6 +403,7 @@ function queueItem(item){
   wrap.innerHTML=`<div>
     <div><b>${t.title}</b> <span class="small muted">${item.kind==="manual" ? "planned" : "auto"}</span></div>
     <div class="small muted">due ${ymdhm(item.due)}</div>
+    <div class="small"><button class="iconbtn danger small" data-del-topic="${t.id}">🗑 Delete topic</button></div>
   </div>
   <div class="qbtns">
     <button data-q="0">Again</button>
@@ -397,9 +411,10 @@ function queueItem(item){
     <button data-q="4">Good</button>
     <button data-q="5">Easy</button>
   </div>`;
-  wrap.querySelectorAll("button").forEach(btn=>{
+  wrap.querySelectorAll("button[data-q]").forEach(btn=>{
     btn.addEventListener("click", ()=> grade(item, +btn.dataset.q));
   });
+  wrap.querySelector('[data-del-topic]')?.addEventListener('click', ()=> deleteTopic(t.id));
   return wrap;
 }
 function grade(item, q){
@@ -515,8 +530,8 @@ document.getElementById("importJson").addEventListener("change",(e)=>{
   }catch(_){ alert("Invalid JSON") } }; r.readAsText(f);
 });
 
-/*** ICS feed builder + downloads (live subscription support) ***/
-function buildICSFeed(horizonDays = 90) {
+/*** ICS export helpers ***/
+function makeIcsLines(horizonDays){
   const lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//SpaceRepetition//EN"];
   const now = new Date(), horizon = addDays(now, horizonDays);
   const pushEvent = (uid, when, title, tags=[])=>{
@@ -533,7 +548,6 @@ function buildICSFeed(horizonDays = 90) {
       "END:VEVENT"
     );
   };
-
   for (const t of topics){
     ensureFields(t);
     const auto = new Date(t.dueISO);
@@ -546,56 +560,30 @@ function buildICSFeed(horizonDays = 90) {
   lines.push("END:VCALENDAR");
   return lines.join("\r\n");
 }
-function download(name, text, mime="text/calendar"){
-  const blob=new Blob([text],{type:mime});
+function download(filename, text){
+  const blob=new Blob([text],{type: filename.endsWith(".ics") ? "text/calendar" : "text/plain"});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement("a"); a.href=url; a.download=name; a.click();
-  URL.revokeObjectURL(url);
+  const a=document.createElement("a"); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
 }
 
-// Keep your original "Export ICS" behavior (ad-hoc file)
-document.getElementById("exportIcs").addEventListener("click", ()=>{
-  download("sr-planned.ics", buildICSFeed(90));
+$("#exportIcs").addEventListener("click", ()=>{
+  const ics = makeIcsLines(90);
+  download("sr-planned.ics", ics);
 });
-
-// NEW: save a stable feed file for subscriptions (upload as feed.ics)
-document.getElementById("saveFeed").addEventListener("click", ()=>{
-  download("feed.ics", buildICSFeed(120)); // 120-day horizon if you prefer
+$("#saveFeed").addEventListener("click", ()=>{
+  const ics = makeIcsLines(180); // 6 months for the feed
+  download("feed.ics", ics);
 });
 
 /*** Render all ***/
 function renderAll(){ renderQueue(); renderTopics(); renderCalendar(); }
 function renderQueue(){
   const q = $("#queue"); q.innerHTML="";
-  const items = (function(){
-    const items=[]; const now=today(), end=addDays(startOfDay(now),1);
-    for (const t of topics){
-      ensureFields(t);
-      if (new Date(t.dueISO) < end) items.push({kind:"auto", t, due:new Date(t.dueISO)});
-      (t.future||[]).forEach((f,idx)=>{ const d=new Date(f.iso); if (d < end) items.push({kind:"manual", t, due:d, index:idx}); });
-    }
-    return items.sort((a,b)=> a.due-b.due);
-  })();
+  const items = dueToday();
   $("#dueCount").textContent = items.length;
   $("#todayStr").textContent = today().toLocaleDateString(undefined,{weekday:"short",year:"numeric",month:"short",day:"numeric"});
   if(!items.length){ q.innerHTML=`<div class="muted">Nothing due today 🎉</div>`; return; }
-  items.forEach(it=> q.appendChild((function(it){
-    const wrap=document.createElement("div"); wrap.className="queueitem"; 
-    wrap.innerHTML=`<div>
-      <div><b>${it.t.title}</b> <span class="small muted">${it.kind==="manual" ? "planned" : "auto"}</span></div>
-      <div class="small muted">due ${ymdhm(it.due)}</div>
-    </div>
-    <div class="qbtns">
-      <button data-q="0">Again</button>
-      <button data-q="3">Hard</button>
-      <button data-q="4">Good</button>
-      <button data-q="5">Easy</button>
-    </div>`;
-    wrap.querySelectorAll("button").forEach(btn=>{
-      btn.addEventListener("click", ()=> grade(it, +btn.dataset.q));
-    });
-    return wrap;
-  })(it)));
+  items.forEach(it=> q.appendChild(queueItem(it)));
 }
 renderAll();
 </script>
