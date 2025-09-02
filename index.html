@@ -26,6 +26,9 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 .queueitem{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);padding:10px;border-radius:10px}
 .qbtns button{min-width:64px}
 .small{font-size:12px}
+.labelish{color:#9aa3c7;font-size:12px}
+.weekgrid{display:grid;grid-template-columns:repeat(7,auto);gap:8px;align-items:center}
+.weekgrid label{font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -33,8 +36,9 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
   <h1>Space Repetition</h1>
   <div class="row">
     <button id="exportJson">Export JSON</button>
-    <label class="muted">Import <input id="importJson" type="file" accept="application/json" style="display:none"/></label>
-    <button id="exportIcs" title="Export next due reviews to .ics with alerts">Export ICS</button>
+    <label for="importJson" class="labelish" style="text-decoration:underline;cursor:pointer">Import</label>
+    <input id="importJson" type="file" accept="application/json" style="display:none"/>
+    <button id="exportIcs" title="Export next due + planned occurrences to .ics with alerts">Export ICS</button>
   </div>
 </header>
 
@@ -59,6 +63,75 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
       <input id="tTime" type="time" value="19:00"/>
       <button id="addTopic" class="primary">Add</button>
     </div>
+
+    <div class="sep"></div>
+
+    <!-- Planner -->
+    <details open>
+      <summary><b>Plan recalls</b> <span class="small muted">— month, weekdays, or every N days</span></summary>
+
+      <div class="row" style="margin-top:6px">
+        <label class="small muted">Topic</label>
+        <select id="planTopic"></select>
+        <label class="small muted">Time</label>
+        <input id="planTime" type="time" value="19:00"/>
+      </div>
+
+      <div class="row">
+        <button id="planThisMonth" title="Add a recall for every calendar day of the current month">Plan this month</button>
+        <button id="planNextMonth"  title="Add a recall for every calendar day of the next month">Plan next month</button>
+        <button id="planClear"      title="Remove all planned recalls for the selected topic">Clear planned</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <!-- Weekday selection -->
+      <div class="small muted">Selected weekdays</div>
+      <div class="weekgrid" style="margin:4px 0 6px 0">
+        <label><input type="checkbox" class="wd" data-wd="0"> Sun</label>
+        <label><input type="checkbox" class="wd" data-wd="1"> Mon</label>
+        <label><input type="checkbox" class="wd" data-wd="2"> Tue</label>
+        <label><input type="checkbox" class="wd" data-wd="3"> Wed</label>
+        <label><input type="checkbox" class="wd" data-wd="4"> Thu</label>
+        <label><input type="checkbox" class="wd" data-wd="5"> Fri</label>
+        <label><input type="checkbox" class="wd" data-wd="6"> Sat</label>
+      </div>
+      <div class="row">
+        <button id="planWeekdaysThis">Plan selected weekdays (this month)</button>
+        <button id="planWeekdaysNext">Plan selected weekdays (next month)</button>
+      </div>
+
+      <div class="row">
+        <label class="small muted">Between</label>
+        <input id="rangeStart" type="date"/>
+        <label class="small muted">and</label>
+        <input id="rangeEnd" type="date"/>
+      </div>
+      <div class="row">
+        <button id="planWeekdaysBetween">Plan selected weekdays (between dates)</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <!-- Every N days -->
+      <div class="row">
+        <label class="small muted">Repeat every</label>
+        <input id="stepN" type="number" min="1" value="2" style="width:80px"/>
+        <label class="small muted">days between</label>
+        <input id="everyStart" type="date"/>
+        <label class="small muted">and</label>
+        <input id="everyEnd" type="date"/>
+        <button id="planEveryN">Plan every N days</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="row">
+        <input type="checkbox" id="planMode"/>
+        <label for="planMode" class="small muted">Plan Mode: tap days on the calendar to toggle a recall for the selected topic at the chosen time</label>
+      </div>
+      <div class="small muted" id="planInfo"></div>
+    </details>
 
     <div class="sep"></div>
 
@@ -117,10 +190,10 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 
 <script>
 /*** Data model ***/
-// topic: { id, title, tags[], ef, reps, interval, dueISO, lastISO, defaultTime, history[] }
-const SK = "sr.topics.v1";
+// topic: { id, title, tags[], ef, reps, interval, dueISO, lastISO, defaultTime, history[], future[] }
+const SK = "sr.topics.v3";
 let topics = load();
-function load(){ try{ return JSON.parse(localStorage.getItem(SK))||[] }catch(e){ return [] } }
+function load(){ try{ const t=JSON.parse(localStorage.getItem(SK)); return Array.isArray(t)?t:[] }catch(e){ return [] } }
 function save(){ localStorage.setItem(SK, JSON.stringify(topics)) }
 
 const $ = q => document.querySelector(q);
@@ -128,19 +201,16 @@ const today = () => new Date();
 const pad2 = n => String(n).padStart(2,"0");
 const ymd = d => d.toISOString().slice(0,10);
 const ymdhm = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-const parseLocal = s => new Date(s); // from <input type="time"> or iso yyyy-mm-ddThh:mm
-
 function startOfDay(d){ const x=new Date(d); x.setHours(0,0,0,0); return x }
 function isSameDay(a,b){ return startOfDay(a).getTime()===startOfDay(b).getTime() }
 function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x }
+function monthMeta(ymStr){ const [Y,M]=ymStr.split("-").map(Number); const first=new Date(Y,M-1,1); return {Y,M,startW:first.getDay(),days:new Date(Y,M,0).getDate()} }
+function ym(d){ return d.toISOString().slice(0,7) }
 
+/*** SM-2 scheduling ***/
 function nextIntervalSM2(t, q){
-  // q: 0-5 (Again 0..Easy 5). Returns updated ef, reps, interval (days)
-  let ef = t.ef ?? 2.5;
-  let reps = t.reps ?? 0;
-  let interval = t.interval ?? 0;
-
-  if (q < 3){ reps = 0; interval = 1; }        // fail → back to 1 day
+  let ef = t.ef ?? 2.5, reps = t.reps ?? 0, interval = t.interval ?? 0;
+  if (q < 3){ reps = 0; interval = 1; }
   else{
     if (reps === 0) interval = 1;
     else if (reps === 1) interval = 3;
@@ -151,23 +221,21 @@ function nextIntervalSM2(t, q){
   return { ef, reps, interval };
 }
 
+/*** Topic helpers ***/
+function ensureFields(t){ t.future = t.future || []; if (!t.defaultTime) t.defaultTime = "19:00"; }
 function addTopic(title, tags, startWhen, defaultTime){
   const now = today();
   const firstDate = startWhen==="today" ? now : addDays(now,1);
   const [hh,mm] = defaultTime.split(":").map(Number);
   const due = new Date(firstDate); due.setHours(hh,mm,0,0);
-
   topics.push({
-    id: crypto.randomUUID(),
-    title, tags, ef:2.5, reps:0, interval:1,
-    dueISO: due.toISOString(),
-    lastISO: null,
-    defaultTime,
-    history:[]
+    id: crypto.randomUUID(), title, tags, ef:2.5, reps:0, interval:1,
+    dueISO: due.toISOString(), lastISO: null, defaultTime,
+    history:[], future:[]
   });
-  save();
-  renderAll();
+  save(); renderAll();
 }
+const topicById = id => topics.find(t=>t.id===id);
 
 /*** UI: Add & list ***/
 $("#addTopic").addEventListener("click", ()=>{
@@ -180,10 +248,10 @@ $("#addTopic").addEventListener("click", ()=>{
 function renderTopics(){
   const box=$("#topics"); box.innerHTML="";
   for (const t of topics){
+    ensureFields(t);
     const next = new Date(t.dueISO);
     const row = document.createElement("div");
     row.className="topicrow";
-    const status = next < today() ? `<span class="badge late">late</span>` : `<span class="badge ok">scheduled</span>`;
     row.innerHTML = `
       <div><b>${t.title}</b> <span class="small muted">${(t.tags||[]).join(", ")}</span></div>
       <div class="small">EF ${t.ef.toFixed(2)}</div>
@@ -193,23 +261,130 @@ function renderTopics(){
   }
 }
 
-/*** Review queue ***/
-function dueToday(){
-  const out=[];
-  const now = today();
-  for (const t of topics){
-    const due = new Date(t.dueISO);
-    if (startOfDay(due) <= startOfDay(now)) out.push(t);
-  }
-  // Sort: oldest due first
-  return out.sort((a,b)=> new Date(a.dueISO)-new Date(b.dueISO));
+/*** Planner core ***/
+const monthPick = { value: ym(today()) };
+function planInfoUpdate(){
+  const id=$("#planTopic").value;
+  const t = topicById(id);
+  const count = t ? (t.future||[]).length : 0;
+  $("#planInfo").textContent = t ? `Planned recalls for "${t.title}": ${count}` : "";
 }
-function queueItem(t){
+function refreshPlanner(){
+  const sel=$("#planTopic"); const cur=sel.value;
+  sel.innerHTML = topics.map(t=>`<option value="${t.id}">${t.title}</option>`).join("");
+  if (topics.length && (!cur || !topics.some(t=>t.id===cur))) sel.value=topics[0].id;
+  else sel.value=cur;
+  // set default dates
+  const now = today();
+  if (!$("#rangeStart").value) $("#rangeStart").value = ymd(now);
+  if (!$("#rangeEnd").value)   $("#rangeEnd").value   = ymd(addDays(now,30));
+  if (!$("#everyStart").value) $("#everyStart").value = ymd(now);
+  if (!$("#everyEnd").value)   $("#everyEnd").value   = ymd(addDays(now,30));
+  // default weekdays: Mon-Fri
+  document.querySelectorAll('.wd').forEach(cb=>{
+    if ([1,2,3,4,5].includes(+cb.dataset.wd)) cb.checked ??= true;
+  });
+  planInfoUpdate();
+}
+$("#planTopic").addEventListener("change", planInfoUpdate);
+function selectedWeekdays(){ return Array.from(document.querySelectorAll(".wd:checked")).map(cb=>+cb.dataset.wd); }
+
+function isoFromDateTime(dateStr, hhmm){
+  const [Y,M,D]=dateStr.split("-").map(Number);
+  const [hh,mm]=(hhmm||"19:00").split(":").map(Number);
+  const d=new Date(Y, (M-1), D, hh, mm, 0, 0);
+  return d.toISOString();
+}
+function addFutureDates(topicId, dateStrs, hhmm){
+  const t=topicById(topicId); if(!t) return; ensureFields(t);
+  const set = new Set((t.future||[]).map(x=>x.iso));
+  for (const ds of dateStrs){
+    const iso = isoFromDateTime(ds, hhmm||t.defaultTime);
+    if (!set.has(iso)){ t.future.push({iso}); set.add(iso); }
+  }
+  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
+  save(); renderAll();
+}
+function datesWeekdaysInMonth(ymStr, weekdays){
+  const {days}=monthMeta(ymStr); const out=[];
+  for (let d=1; d<=days; d++){
+    const ds=`${ymStr}-${pad2(d)}`; const dow=new Date(ds).getDay();
+    if (weekdays.includes(dow)) out.push(ds);
+  }
+  return out;
+}
+function datesWeekdaysBetween(startStr,endStr,weekdays){
+  const out=[]; let d=new Date(startStr);
+  const end=new Date(endStr); end.setHours(23,59,59,999);
+  while (d<=end){ if (weekdays.includes(d.getDay())) out.push(ymd(d)); d=addDays(d,1); }
+  return out;
+}
+function datesEveryNDays(startStr,endStr,step){
+  const out=[]; let d=new Date(startStr);
+  const end=new Date(endStr); end.setHours(23,59,59,999);
+  while (d<=end){ out.push(ymd(d)); d=addDays(d, Math.max(1,step)); }
+  return out;
+}
+
+/*** Month planning buttons ***/
+$("#planThisMonth").addEventListener("click", ()=>{
+  const ymStr = monthPick.value;
+  const {days}=monthMeta(ymStr);
+  const all = Array.from({length:days},(_,i)=>`${ymStr}-${pad2(i+1)}`);
+  addFutureDates($("#planTopic").value, all, $("#planTime").value);
+});
+$("#planNextMonth").addEventListener("click", ()=>{
+  const [Y,M]=monthPick.value.split("-").map(Number);
+  const next = new Date(Y, M, 1);
+  const ymStr = ym(next);
+  const {days}=monthMeta(ymStr);
+  const all = Array.from({length:days},(_,i)=>`${ymStr}-${pad2(i+1)}`);
+  addFutureDates($("#planTopic").value, all, $("#planTime").value);
+});
+$("#planClear").addEventListener("click", ()=>{
+  const t=topicById($("#planTopic").value);
+  if (t && confirm(`Remove all planned recalls for "${t.title}"?`)){ t.future=[]; save(); renderAll(); }
+});
+
+/*** Weekday planning buttons ***/
+$("#planWeekdaysThis").addEventListener("click", ()=>{
+  const days = datesWeekdaysInMonth(monthPick.value, selectedWeekdays());
+  addFutureDates($("#planTopic").value, days, $("#planTime").value);
+});
+$("#planWeekdaysNext").addEventListener("click", ()=>{
+  const [Y,M]=monthPick.value.split("-").map(Number);
+  const next=ym(new Date(Y,M,1));
+  const days = datesWeekdaysInMonth(next, selectedWeekdays());
+  addFutureDates($("#planTopic").value, days, $("#planTime").value);
+});
+$("#planWeekdaysBetween").addEventListener("click", ()=>{
+  const days = datesWeekdaysBetween($("#rangeStart").value, $("#rangeEnd").value, selectedWeekdays());
+  addFutureDates($("#planTopic").value, days, $("#planTime").value);
+});
+
+/*** Every N days planning ***/
+$("#planEveryN").addEventListener("click", ()=>{
+  const n = Math.max(1, +$("#stepN").value||1);
+  const days = datesEveryNDays($("#everyStart").value, $("#everyEnd").value, n);
+  addFutureDates($("#planTopic").value, days, $("#planTime").value);
+});
+
+/*** Review queue (auto + planned) ***/
+function dueToday(){
+  const items=[]; const now=today(), end=addDays(startOfDay(now),1);
+  for (const t of topics){
+    ensureFields(t);
+    if (new Date(t.dueISO) < end) items.push({kind:"auto", t, due:new Date(t.dueISO)});
+    (t.future||[]).forEach((f,idx)=>{ const d=new Date(f.iso); if (d < end) items.push({kind:"manual", t, due:d, index:idx}); });
+  }
+  return items.sort((a,b)=> a.due-b.due);
+}
+function queueItem(item){
+  const t=item.t;
   const wrap=document.createElement("div"); wrap.className="queueitem"; 
-  const next = new Date(t.dueISO);
   wrap.innerHTML=`<div>
-    <div><b>${t.title}</b></div>
-    <div class="small muted">due ${ymdhm(next)}</div>
+    <div><b>${t.title}</b> <span class="small muted">${item.kind==="manual" ? "planned" : "auto"}</span></div>
+    <div class="small muted">due ${ymdhm(item.due)}</div>
   </div>
   <div class="qbtns">
     <button data-q="0">Again</button>
@@ -218,48 +393,30 @@ function queueItem(t){
     <button data-q="5">Easy</button>
   </div>`;
   wrap.querySelectorAll("button").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
-      grade(t, +btn.dataset.q);
-    });
+    btn.addEventListener("click", ()=> grade(item, +btn.dataset.q));
   });
   return wrap;
 }
-function grade(t, q){
+function grade(item, q){
+  const t=item.t;
   const upd = nextIntervalSM2(t, q);
-  t.ef = upd.ef; t.reps = upd.reps; t.interval = upd.interval;
-  t.lastISO = (new Date()).toISOString();
+  t.ef=upd.ef; t.reps=upd.reps; t.interval=upd.interval;
+  t.lastISO=(new Date()).toISOString();
 
-  // next due at default time
   const d = addDays(today(), t.interval);
   const [hh,mm] = (t.defaultTime || "19:00").split(":").map(Number);
   d.setHours(hh,mm,0,0);
   t.dueISO = d.toISOString();
 
-  t.history.push({ts: t.lastISO, q});
-  save();
-  renderAll();
-}
-
-function renderQueue(){
-  const q = $("#queue"); q.innerHTML="";
-  const items = dueToday();
-  $("#dueCount").textContent = items.length;
-  $("#todayStr").textContent = (new Date()).toLocaleDateString(undefined,{weekday:"short",year:"numeric",month:"short",day:"numeric"});
-  if(!items.length){ q.innerHTML=`<div class="muted">Nothing due today 🎉</div>`; return; }
-  items.forEach(t=> q.appendChild(queueItem(t)));
+  if (item.kind==="manual" && typeof item.index==="number"){
+    const iso = item.t.future[item.index]?.iso;
+    item.t.future = item.t.future.filter(x=>x.iso!==iso);
+  }
+  t.history = t.history || []; t.history.push({ts: t.lastISO, q});
+  save(); renderAll();
 }
 
 /*** Calendar ***/
-function monthMeta(ymStr){
-  const [Y,M] = ymStr.split("-").map(Number);
-  const first=new Date(Y,M-1,1);
-  const startW=first.getDay();
-  const days=new Date(Y,M,0).getDate();
-  return {Y,M,startW,days};
-}
-function ym(d){ return d.toISOString().slice(0,7) }
-const monthPick = { value: ym(today()) };
-
 function renderCalendar(){
   const mval = monthPick.value;
   const {Y,M,startW,days} = monthMeta(mval);
@@ -268,42 +425,66 @@ function renderCalendar(){
   for(let i=0;i<startW;i++){ const g=document.createElement("div"); g.className="day"; cal.appendChild(g) }
 
   let due=0, late=0, done=0, streak=0, curStreak=0, lastHadReview=null;
+
   for(let d=1; d<=days; d++){
-    const key = `${mval}-${String(d).padStart(2,"0")}`;
+    const key = `${mval}-${pad2(d)}`;
     const cell=document.createElement("div"); cell.className="day";
-    cell.innerHTML=`<div class="dnum">${d}</div><div class="count" id="c-${key}">0</div>`;
+    cell.innerHTML=`<div class="dnum">${d}</div><div class="count" id="c-${key}">·</div>`;
     cal.appendChild(cell);
 
     const start = new Date(key+"T00:00:00");
     const end   = addDays(start,1);
 
-    // counts
-    const dueN = topics.filter(t=> new Date(t.dueISO) >= start && new Date(t.dueISO) < end).length;
-    const lateN= topics.filter(t=> new Date(t.dueISO) < start).length;
-    document.getElementById(`c-${key}`).textContent = dueN>0 ? dueN : "·";
+    let dueN = 0, lateN = 0;
+    for (const t of topics){
+      const autoDue = new Date(t.dueISO);
+      if (autoDue >= start && autoDue < end) dueN += 1;
+      if (autoDue < start) lateN += 1;
+      (t.future||[]).forEach(f=>{
+        const fd=new Date(f.iso);
+        if (fd >= start && fd < end) dueN += 1;
+        if (fd < start) lateN += 1;
+      });
+    }
+    const el = document.getElementById(`c-${key}`);
+    el.textContent = dueN>0 ? dueN : "·";
     if (dueN>0) due += dueN;
     if (lateN>0) late = lateN;
 
-    // check if any review happened this day (from history)
+    cell.addEventListener("click", ()=>{
+      if (!$("#planMode").checked) return;
+      const tid=$("#planTopic").value; if (!tid) return;
+      toggleFutureForDate(tid, key, $("#planTime").value);
+    });
+
     const had = topics.some(t => (t.history||[]).some(h=> {
       const ts=new Date(h.ts); return ts>=start && ts<end;
     }));
     if (had){ curStreak = (lastHadReview && isSameDay(addDays(lastHadReview,1), start)) ? curStreak+1 : 1; lastHadReview = start; }
-    else if (isSameDay(start,today())){ /* keep running */ }
-    else { /* gaps break streak but we continue computing */ }
     if (curStreak>streak) streak=curStreak;
   }
+
   $("#mDue").textContent = due;
   $("#mLate").textContent = late;
   $("#statDue").textContent = due;
   $("#streak").textContent = streak;
 
-  // reviews done this month
   const mStart = new Date(`${mval}-01T00:00:00`), mEnd= addDays(new Date(`${mval}-${pad2(days)}T00:00:00`),1);
   for (const t of topics) done += (t.history||[]).filter(h=>{ const ts=new Date(h.ts); return ts>=mStart && ts<mEnd; }).length;
   $("#statDone").textContent = done;
+
+  refreshPlanner();
+}
+function toggleFutureForDate(topicId, dateStr, hhmm){
+  const t=topicById(topicId); if(!t) return; ensureFields(t);
+  const iso = isoFromDateTime(dateStr, hhmm || t.defaultTime);
+  const idx = t.future.findIndex(x=>x.iso===iso);
+  if (idx>=0) t.future.splice(idx,1); else t.future.push({iso});
+  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
+  save(); renderAll();
 }
 
+/*** Month nav ***/
 $("#prevM").addEventListener("click", ()=>{
   const [Y,M]=monthPick.value.split("-").map(Number);
   const prev=new Date(Y, M-2, 1); monthPick.value = ym(prev); renderCalendar();
@@ -319,45 +500,56 @@ $("#exportJson").addEventListener("click", ()=>{
   const url=URL.createObjectURL(blob); const a=document.createElement("a");
   a.href=url; a.download="spaced-repetition-backup.json"; a.click(); URL.revokeObjectURL(url);
 });
-document.querySelector("label input#importJson").addEventListener("change",(e)=>{
+document.getElementById("importJson").addEventListener("change",(e)=>{
   const f=e.target.files?.[0]; if(!f) return;
   const r=new FileReader(); r.onload=()=>{ try{
-    const data=JSON.parse(r.result); topics = data.topics || []; save(); renderAll(); alert("Imported");
+    const data=JSON.parse(r.result); topics = (data.topics||[]).map(t=>({future:[],...t})); save(); renderAll(); alert("Imported");
   }catch(_){ alert("Invalid JSON") } }; r.readAsText(f);
 });
 
-/*** ICS export (next due occurrences only, with 10-minute alert) ***/
+/*** ICS export (auto + planned for ~70 days, each with a 10-minute alert) ***/
 $("#exportIcs").addEventListener("click", ()=>{
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const lines = [
-    "BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//SpaceRepetition//EN"
-  ];
-  const now = new Date();
-  for (const t of topics){
-    const due = new Date(t.dueISO);
-    if (due < addDays(now,-1)) continue; // skip very old
-    const uid = `sr-${t.id}@local`;
-    const dt = due.toISOString().replace(/[-:]/g,"").split(".")[0]+"Z"; // UTC
+  const lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//SpaceRepetition//EN"];
+  const now = new Date(), horizon = addDays(now, 70);
+  const pushEvent = (uid, when, title, tags=[])=>{
+    const dt = when.toISOString().replace(/[-:]/g,"").split(".")[0]+"Z";
     lines.push(
       "BEGIN:VEVENT",
       `UID:${uid}`,
       `DTSTAMP:${new Date().toISOString().replace(/[-:]/g,"").split(".")[0]}Z`,
-      `SUMMARY:Recall – ${t.title}`,
-      `DESCRIPTION:SR review (${(t.tags||[]).join(", ")})`,
+      `SUMMARY:Recall – ${title}`,
+      `DESCRIPTION:${tags.join(", ")}`,
       `DTSTART:${dt}`,
-      `DTEND:${dt}`, // all-day moment, reminder will pop
+      `DTEND:${dt}`,
       "BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:Review","TRIGGER:-PT10M","END:VALARM",
       "END:VEVENT"
     );
+  };
+  for (const t of topics){
+    ensureFields(t);
+    const auto = new Date(t.dueISO);
+    if (auto >= addDays(now,-1) && auto <= horizon) pushEvent(`auto-${t.id}`, auto, t.title, t.tags||[]);
+    (t.future||[]).forEach((f,i)=>{
+      const d=new Date(f.iso);
+      if (d >= addDays(now,-1) && d <= horizon) pushEvent(`pl-${t.id}-${i}`, d, t.title, ["planned", ...(t.tags||[])]);
+    });
   }
   lines.push("END:VCALENDAR");
   const blob=new Blob([lines.join("\r\n")],{type:"text/calendar"});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement("a"); a.href=url; a.download="sr-next.ics"; a.click(); URL.revokeObjectURL(url);
+  const a=document.createElement("a"); a.href=url; a.download="sr-planned.ics"; a.click(); URL.revokeObjectURL(url);
 });
 
 /*** Render all ***/
 function renderAll(){ renderQueue(); renderTopics(); renderCalendar(); }
+function renderQueue(){
+  const q = $("#queue"); q.innerHTML="";
+  const items = dueToday();
+  $("#dueCount").textContent = items.length;
+  $("#todayStr").textContent = (new Date()).toLocaleDateString(undefined,{weekday:"short",year:"numeric",month:"short",day:"numeric"});
+  if(!items.length){ q.innerHTML=`<div class="muted">Nothing due today 🎉</div>`; return; }
+  items.forEach(it=> q.appendChild(queueItem(it)));
+}
 renderAll();
 </script>
 </body>
