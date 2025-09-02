@@ -39,6 +39,8 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
     <label for="importJson" class="labelish" style="text-decoration:underline;cursor:pointer">Import</label>
     <input id="importJson" type="file" accept="application/json" style="display:none"/>
     <button id="exportIcs" title="Export next due + planned occurrences to .ics with alerts">Export ICS</button>
+    <!-- NEW: live subscription feed -->
+    <button id="saveFeed" title="Save a subscribable feed file (upload as feed.ics to your Pages site)">Save feed.ics</button>
   </div>
 </header>
 
@@ -513,10 +515,10 @@ document.getElementById("importJson").addEventListener("change",(e)=>{
   }catch(_){ alert("Invalid JSON") } }; r.readAsText(f);
 });
 
-/*** ICS export (auto + planned for ~90 days, each with a 10-minute alert) ***/
-$("#exportIcs").addEventListener("click", ()=>{
+/*** ICS feed builder + downloads (live subscription support) ***/
+function buildICSFeed(horizonDays = 90) {
   const lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//SpaceRepetition//EN"];
-  const now = new Date(), horizon = addDays(now, 90);
+  const now = new Date(), horizon = addDays(now, horizonDays);
   const pushEvent = (uid, when, title, tags=[])=>{
     const dt = when.toISOString().replace(/[-:]/g,"").split(".")[0]+"Z";
     lines.push(
@@ -531,6 +533,7 @@ $("#exportIcs").addEventListener("click", ()=>{
       "END:VEVENT"
     );
   };
+
   for (const t of topics){
     ensureFields(t);
     const auto = new Date(t.dueISO);
@@ -541,9 +544,23 @@ $("#exportIcs").addEventListener("click", ()=>{
     });
   }
   lines.push("END:VCALENDAR");
-  const blob=new Blob([lines.join("\r\n")],{type:"text/calendar"});
+  return lines.join("\r\n");
+}
+function download(name, text, mime="text/calendar"){
+  const blob=new Blob([text],{type:mime});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement("a"); a.href=url; a.download="sr-planned.ics"; a.click(); URL.revokeObjectURL(url);
+  const a=document.createElement("a"); a.href=url; a.download=name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Keep your original "Export ICS" behavior (ad-hoc file)
+document.getElementById("exportIcs").addEventListener("click", ()=>{
+  download("sr-planned.ics", buildICSFeed(90));
+});
+
+// NEW: save a stable feed file for subscriptions (upload as feed.ics)
+document.getElementById("saveFeed").addEventListener("click", ()=>{
+  download("feed.ics", buildICSFeed(120)); // 120-day horizon if you prefer
 });
 
 /*** Render all ***/
