@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Space Repetition</title>
+<style>
+:root{--bg:#0f1220;--card:#181c2f;--ink:#eef1ff;--muted:#9aa3c7;--line:#2a3052;--ok:#7bd88f;--warn:#ffd166;--bad:#ff7575;--accent:#6ca8ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+header,footer{padding:12px 16px;display:flex;align-items:center;justify-content:space-between}
+h1{margin:0;font-size:18px;letter-spacing:.2px}
+.wrap{max-width:1100px;margin:0 auto;padding:16px;display:grid;grid-template-columns:420px 1fr;gap:16px}
+.card{background:var(--card);border-radius:12px;padding:14px;box-shadow:0 0 0 1px rgba(255,255,255,.05) inset;overflow-x:auto}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.muted{color:var(--muted)}.right{text-align:right}
+input,textarea,button,select{background:#12162a;border:1px solid var(--line);color:var(--ink);padding:8px 10px;border-radius:8px}
+button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8);border:none}
+.sep{height:1px;background:var(--line);opacity:.6;margin:10px 0}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
+.day{aspect-ratio:1/1;background:#12162a;border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;justify-content:space-between}
+.dnum{font-size:12px;color:var(--muted)}.count{font-size:18px;text-align:right}
+.summary{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:8px}
+.big{font-size:28px;font-weight:700}.pill{background:#12162a;border:1px solid var(--line);border-radius:999px;padding:10px 12px;display:inline-flex;gap:8px}
+.badge{padding:4px 8px;border-radius:20px;border:1px solid var(--line);font-size:12px}
+.badge.due{border-color:#ffd166}.badge.late{border-color:#ff7575}.badge.ok{border-color:#7bd88f}
+.topicrow{display:grid;grid-template-columns:1fr 100px 100px 1fr;gap:8px;align-items:center;margin-bottom:6px}
+.queueitem{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);padding:10px;border-radius:10px}
+.qbtns button{min-width:64px}
+.small{font-size:12px}
+.labelish{color:#9aa3c7;font-size:12px}
+.weekgrid{display:grid;grid-template-columns:repeat(7,auto);gap:8px;align-items:center}
+.weekgrid label{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Space Repetition</h1>
+  <div class="row">
+    <button id="exportJson">Export JSON</button>
+    <label for="importJson" class="labelish" style="text-decoration:underline;cursor:pointer">Import</label>
+    <input id="importJson" type="file" accept="application/json" style="display:none"/>
+    <button id="exportIcs" title="Export next due + planned occurrences to .ics with alerts">Export ICS</button>
+    <!-- NEW: live subscription feed -->
+    <button id="saveFeed" title="Save a subscribable feed file (upload as feed.ics to your Pages site)">Save feed.ics</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- LEFT: add & today queue -->
+  <section class="card">
+    <div class="row" style="justify-content:space-between">
+      <div><b>Add Topic</b></div>
+      <div class="small muted">SM-2 scheduling • times shown in your local time</div>
+    </div>
+    <div class="row">
+      <input id="tTitle" placeholder="Topic title" style="flex:1"/>
+      <input id="tTags"  placeholder="tags (comma)" />
+    </div>
+    <div class="row">
+      <label class="small muted">Start today?</label>
+      <select id="tStart">
+        <option value="today">Yes</option>
+        <option value="tomorrow">Tomorrow</option>
+      </select>
+      <label class="small muted">Default due time</label>
+      <input id="tTime" type="time" value="19:00"/>
+      <button id="addTopic" class="primary">Add</button>
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- Planner -->
+    <details open>
+      <summary><b>Plan recalls</b> <span class="small muted">— month, weekdays, or every N days</span></summary>
+
+      <div class="row" style="margin-top:6px">
+        <label class="small muted">Topic</label>
+        <select id="planTopic"></select>
+        <label class="small muted">Time</label>
+        <input id="planTime" type="time" value="19:00"/>
+      </div>
+
+      <div class="row">
+        <button id="planThisMonth" title="Add a recall for every calendar day of the current month">Plan this month</button>
+        <button id="planNextMonth"  title="Add a recall for every calendar day of the next month">Plan next month</button>
+        <button id="planClear"      title="Remove all planned recalls for the selected topic">Clear planned</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <!-- Weekday selection -->
+      <div class="small muted">Selected weekdays</div>
+      <div class="weekgrid" style="margin:4px 0 6px 0">
+        <label><input type="checkbox" class="wd" data-wd="0"> Sun</label>
+        <label><input type="checkbox" class="wd" data-wd="1"> Mon</label>
+        <label><input type="checkbox" class="wd" data-wd="2"> Tue</label>
+        <label><input type="checkbox" class="wd" data-wd="3"> Wed</label>
+        <label><input type="checkbox" class="wd" data-wd="4"> Thu</label>
+        <label><input type="checkbox" class="wd" data-wd="5"> Fri</label>
+        <label><input type="checkbox" class="wd" data-wd="6"> Sat</label>
+      </div>
+      <div class="row">
+        <button id="planWeekdaysThis">Plan selected weekdays (this month)</button>
+        <button id="planWeekdaysNext">Plan selected weekdays (next month)</button>
+      </div>
+
+      <div class="row">
+        <label class="small muted">Between</label>
+        <input id="rangeStart" type="date"/>
+        <label class="small muted">and</label>
+        <input id="rangeEnd" type="date"/>
+      </div>
+      <div class="row">
+        <button id="planWeekdaysBetween">Plan selected weekdays (between dates)</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <!-- Every N days -->
+      <div class="row">
+        <label class="small muted">Repeat every</label>
+        <input id="stepN" type="number" min="1" value="2" style="width:80px"/>
+        <label class="small muted">days between</label>
+        <input id="everyStart" type="date"/>
+        <label class="small muted">and</label>
+        <input id="everyEnd" type="date"/>
+        <button id="planEveryN">Plan every N days</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="row">
+        <input type="checkbox" id="planMode"/>
+        <label for="planMode" class="small muted">Plan Mode: tap days on the calendar to toggle a recall for the selected topic at the chosen time</label>
+      </div>
+      <div class="small muted" id="planInfo"></div>
+    </details>
+
+    <div class="sep"></div>
+
+    <div class="row" style="justify-content:space-between">
+      <div><b>Due Today</b> <span class="badge due" id="dueCount">0</span></div>
+      <div class="small muted" id="todayStr"></div>
+    </div>
+    <div id="queue"></div>
+
+    <div class="sep"></div>
+
+    <details>
+      <summary>All Topics</summary>
+      <div id="topics"></div>
+    </details>
+  </section>
+
+  <!-- RIGHT: calendar & summary -->
+  <section class="card">
+    <div class="row" style="justify-content:space-between">
+      <div class="row">
+        <button id="prevM">◀</button>
+        <div id="monthTitle" style="font-weight:700"></div>
+        <button id="nextM">▶</button>
+      </div>
+      <div class="row">
+        <span class="pill"><span>Due</span><b id="mDue">0</b></span>
+        <span class="pill"><span>Late</span><b id="mLate">0</b></span>
+      </div>
+    </div>
+    <div class="grid" id="cal"></div>
+
+    <div class="sep"></div>
+
+    <div class="summary">
+      <div class="card">
+        <div class="big" id="statDue">0</div>
+        <div class="muted">Due this month</div>
+      </div>
+      <div class="card">
+        <div class="big" id="statDone">0</div>
+        <div class="muted">Reviews done this month</div>
+      </div>
+      <div class="card">
+        <div class="big" id="streak">0</div>
+        <div class="muted">Daily streak (any reviews)</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<footer class="muted">
+  <div>Tip: Export ICS and add it to Apple/Google Calendar to get notifications on iPad or Gmail.</div>
+  <div class="right small">Local-only; data saved to your browser.</div>
+</footer>
+
+<script>
+/*** Local-time date helpers (Safari-safe) ***/
+const pad2 = n => String(n).padStart(2,"0");
+const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+function parseYMD(str){ const [Y,M,D]=str.split("-").map(Number); return new Date(Y, M-1, D); }
+function startOfDay(d){ const x=new Date(d); x.setHours(0,0,0,0); return x }
+function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x }
+function isSameDay(a,b){ return startOfDay(a).getTime()===startOfDay(b).getTime() }
+function ym(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}` }
+function monthMeta(ymStr){ const [Y,M]=ymStr.split("-").map(Number); const first=new Date(Y,M-1,1); return {Y,M,startW:first.getDay(),days:new Date(Y,M,0).getDate()} }
+function ymdhm(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}` }
+
+/*** Data model ***/
+// topic: { id, title, tags[], ef, reps, interval, dueISO, lastISO, defaultTime, history[], future[] }
+const SK = "sr.topics.v4";
+let topics = load();
+function load(){ try{ const t=JSON.parse(localStorage.getItem(SK)); return Array.isArray(t)?t:[] }catch(e){ return [] } }
+function save(){ localStorage.setItem(SK, JSON.stringify(topics)) }
+
+const $ = q => document.querySelector(q);
+const today = () => new Date();
+
+/*** SM-2 scheduling ***/
+function nextIntervalSM2(t, q){
+  let ef = t.ef ?? 2.5, reps = t.reps ?? 0, interval = t.interval ?? 0;
+  if (q < 3){ reps = 0; interval = 1; }
+  else{
+    if (reps === 0) interval = 1;
+    else if (reps === 1) interval = 3;
+    else interval = Math.round(interval * ef);
+    reps += 1;
+    ef = Math.max(1.3, ef + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)));
+  }
+  return { ef, reps, interval };
+}
+
+/*** Topic helpers ***/
+function ensureFields(t){ t.future = t.future || []; if (!t.defaultTime) t.defaultTime = "19:00"; }
+function addTopic(title, tags, startWhen, defaultTime){
+  const now = today();
+  const firstDate = startWhen==="today" ? now : addDays(now,1);
+  const [hh,mm] = defaultTime.split(":").map(Number);
+  const due = new Date(firstDate); due.setHours(hh,mm,0,0);
+  topics.push({
+    id: crypto.randomUUID(), title, tags, ef:2.5, reps:0, interval:1,
+    dueISO: due.toISOString(), lastISO: null, defaultTime,
+    history:[], future:[]
+  });
+  save(); renderAll();
+}
+const topicById = id => topics.find(t=>t.id===id);
+
+/*** UI: Add & list ***/
+$("#addTopic").addEventListener("click", ()=>{
+  const title=$("#tTitle").value.trim(); if(!title) return;
+  const tags=$("#tTags").value.split(",").map(s=>s.trim()).filter(Boolean);
+  addTopic(title, tags, $("#tStart").value, $("#tTime").value);
+  $("#tTitle").value=""; $("#tTags").value="";
+});
+function renderTopics(){
+  const box=$("#topics"); box.innerHTML="";
+  for (const t of topics){
+    ensureFields(t);
+    const next = new Date(t.dueISO);
+    const row = document.createElement("div");
+    row.className="topicrow";
+    row.innerHTML = `
+      <div><b>${t.title}</b> <span class="small muted">${(t.tags||[]).join(", ")}</span></div>
+      <div class="small">EF ${t.ef.toFixed(2)}</div>
+      <div class="small">${t.reps} reps</div>
+      <div class="small">${ymdhm(next)}</div>`;
+    box.appendChild(row);
+  }
+}
+
+/*** Planner ***/
+const monthPick = { value: ym(today()) };
+function planInfoUpdate(){
+  const id=$("#planTopic").value;
+  const t = topicById(id);
+  const count = t ? (t.future||[]).length : 0;
+  $("#planInfo").textContent = t ? `Planned recalls for "${t.title}": ${count}` : "";
+}
+function refreshPlanner(){
+  const sel=$("#planTopic"); const cur=sel.value;
+  sel.innerHTML = topics.map(t=>`<option value="${t.id}">${t.title}</option>`).join("");
+  if (topics.length && (!cur || !topics.some(t=>t.id===cur))) sel.value=topics[0].id;
+  else sel.value=cur;
+  // set default dates synced to viewed month
+  const {Y,M,days}=monthMeta(monthPick.value);
+  const start = new Date(Y,M-1,1), end=new Date(Y,M-1,days);
+  if (!$("#rangeStart").value) $("#rangeStart").value = ymd(start);
+  if (!$("#rangeEnd").value)   $("#rangeEnd").value   = ymd(end);
+  if (!$("#everyStart").value) $("#everyStart").value = ymd(start);
+  if (!$("#everyEnd").value)   $("#everyEnd").value   = ymd(end);
+  // default weekdays: Mon-Fri
+  document.querySelectorAll('.wd').forEach(cb=>{
+    if ([1,2,3,4,5].includes(+cb.dataset.wd)) cb.checked ??= true;
+  });
+  planInfoUpdate();
+}
+$("#planTopic").addEventListener("change", planInfoUpdate);
+
+function selectedWeekdays(){ return Array.from(document.querySelectorAll(".wd:checked")).map(cb=>+cb.dataset.wd); }
+function isoFromDateTime(dateStr, hhmm){
+  const d=parseYMD(dateStr);
+  const [hh,mm]=(hhmm||"19:00").split(":").map(Number);
+  d.setHours(hh,mm,0,0);
+  return d.toISOString();
+}
+function addFutureDates(topicId, dateStrs, hhmm){
+  const t=topicById(topicId); if(!t) return; ensureFields(t);
+  const set = new Set((t.future||[]).map(x=>x.iso));
+  for (const ds of dateStrs){
+    const iso = isoFromDateTime(ds, hhmm||t.defaultTime);
+    if (!set.has(iso)){ t.future.push({iso}); set.add(iso); }
+  }
+  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
+  save(); renderAll();
+}
+function datesWeekdaysInMonth(ymStr, weekdays){
+  const {Y,M,days}=monthMeta(ymStr); const out=[];
+  for (let d=1; d<=days; d++){
+    const date = new Date(Y,M-1,d);
+    if (weekdays.includes(date.getDay())) out.push(ymd(date));
+  }
+  return out;
+}
+function datesWeekdaysBetween(startStr,endStr,weekdays){
+  const out=[]; let d=parseYMD(startStr);
+  const end=parseYMD(endStr); end.setHours(23,59,59,999);
+  while (d<=end){ if (weekdays.includes(d.getDay())) out.push(ymd(d)); d=addDays(d,1); }
+  return out;
+}
+function datesEveryNDays(startStr,endStr,step){
+  const out=[]; let d=parseYMD(startStr);
+  const end=parseYMD(endStr); end.setHours(23,59,59,999);
+  while (d<=end){ out.push(ymd(d)); d=addDays(d, Math.max(1,step)); }
+  return out;
+}
+
+/*** Bulk month planning ***/
+$("#planThisMonth").addEventListener("click", ()=>{
+  const ymStr = monthPick.value;
+  const {Y,M,days}=monthMeta(ymStr);
+  const all = Array.from({length:days},(_,i)=> ymd(new Date(Y,M-1,i+1)) );
+  addFutureDates($("#planTopic").value, all, $("#planTime").value);
+});
+$("#planNextMonth").addEventListener("click", ()=>{
+  const [Y,M]=monthPick.value.split("-").map(Number);
+  const next = new Date(Y, M, 1);
+  const ymStr = ym(next);
+  const {Y:YY,M:MM,days}=monthMeta(ymStr);
+  const all = Array.from({length:days},(_,i)=> ymd(new Date(YY,MM-1,i+1)) );
+  addFutureDates($("#planTopic").value, all, $("#planTime").value);
+});
+$("#planClear").addEventListener("click", ()=>{
+  const t=topicById($("#planTopic").value);
+  if (t && confirm(`Remove all planned recalls for "${t.title}"?`)){ t.future=[]; save(); renderAll(); }
+});
+
+/*** Weekday planning ***/
+$("#planWeekdaysThis").addEventListener("click", ()=>{
+  const days = datesWeekdaysInMonth(monthPick.value, selectedWeekdays());
+  addFutureDates($("#planTopic").value, days, $("#planTime").value);
+});
+$("#planWeekdaysNext").addEventListener("click", ()=>{
+  const [Y,M]=monthPick.value.split("-").map(Number);
+  const next=ym(new Date(Y,M,1));
+  const days = datesWeekdaysInMonth(next, selectedWeekdays());
+  addFutureDates($("#planTopic").value, days, $("#planTime").value);
+});
+$("#planWeekdaysBetween").addEventListener("click", ()=>{
+  const days = datesWeekdaysBetween($("#rangeStart").value, $("#rangeEnd").value, selectedWeekdays());
+  addFutureDates($("#planTopic").value, days, $("#planTime").value);
+});
+
+/*** Every N days planning ***/
+$("#planEveryN").addEventListener("click", ()=>{
+  const n = Math.max(1, +$("#stepN").value||1);
+  const days = datesEveryNDays($("#everyStart").value, $("#everyEnd").value, n);
+  addFutureDates($("#planTopic").value, days, $("#planTime").value);
+});
+
+/*** Review queue (auto + planned) ***/
+function dueToday(){
+  const items=[]; const now=today(), end=addDays(startOfDay(now),1);
+  for (const t of topics){
+    ensureFields(t);
+    if (new Date(t.dueISO) < end) items.push({kind:"auto", t, due:new Date(t.dueISO)});
+    (t.future||[]).forEach((f,idx)=>{ const d=new Date(f.iso); if (d < end) items.push({kind:"manual", t, due:d, index:idx}); });
+  }
+  return items.sort((a,b)=> a.due-b.due);
+}
+function queueItem(item){
+  const t=item.t;
+  const wrap=document.createElement("div"); wrap.className="queueitem"; 
+  wrap.innerHTML=`<div>
+    <div><b>${t.title}</b> <span class="small muted">${item.kind==="manual" ? "planned" : "auto"}</span></div>
+    <div class="small muted">due ${ymdhm(item.due)}</div>
+  </div>
+  <div class="qbtns">
+    <button data-q="0">Again</button>
+    <button data-q="3">Hard</button>
+    <button data-q="4">Good</button>
+    <button data-q="5">Easy</button>
+  </div>`;
+  wrap.querySelectorAll("button").forEach(btn=>{
+    btn.addEventListener("click", ()=> grade(item, +btn.dataset.q));
+  });
+  return wrap;
+}
+function grade(item, q){
+  const t=item.t;
+  const upd = nextIntervalSM2(t, q);
+  t.ef=upd.ef; t.reps=upd.reps; t.interval=upd.interval;
+  t.lastISO=(new Date()).toISOString();
+
+  const d = addDays(today(), t.interval);
+  const [hh,mm] = (t.defaultTime || "19:00").split(":").map(Number);
+  d.setHours(hh,mm,0,0);
+  t.dueISO = d.toISOString();
+
+  if (item.kind==="manual" && typeof item.index==="number"){
+    const iso = item.t.future[item.index]?.iso;
+    item.t.future = item.t.future.filter(x=>x.iso!==iso);
+  }
+  t.history = t.history || []; t.history.push({ts: t.lastISO, q});
+  save(); renderAll();
+}
+
+/*** Calendar ***/
+function renderCalendar(){
+  const mval = monthPick.value;
+  const {Y,M,startW,days} = monthMeta(mval);
+  $("#monthTitle").textContent = new Date(Y,M-1).toLocaleString(undefined,{month:"long",year:"numeric"});
+  const cal=$("#cal"); cal.innerHTML="";
+  for(let i=0;i<startW;i++){ const g=document.createElement("div"); g.className="day"; cal.appendChild(g) }
+
+  let due=0, late=0, done=0, streak=0, curStreak=0, lastHadReview=null;
+
+  for(let d=1; d<=days; d++){
+    const dateObj = new Date(Y,M-1,d);
+    const key = ymd(dateObj);
+    const cell=document.createElement("div"); cell.className="day";
+    cell.innerHTML=`<div class="dnum">${d}</div><div class="count" id="c-${key}">·</div>`;
+    cal.appendChild(cell);
+
+    const start = startOfDay(dateObj);
+    const end   = addDays(start,1);
+
+    let dueN = 0, lateN = 0;
+    for (const t of topics){
+      const autoDue = new Date(t.dueISO);
+      if (autoDue >= start && autoDue < end) dueN += 1;
+      if (autoDue < start) lateN += 1;
+      (t.future||[]).forEach(f=>{
+        const fd=new Date(f.iso);
+        if (fd >= start && fd < end) dueN += 1;
+        if (fd < start) lateN += 1;
+      });
+    }
+    const el = document.getElementById(`c-${key}`);
+    el.textContent = dueN>0 ? dueN : "·";
+    if (dueN>0) due += dueN;
+    if (lateN>0) late = lateN;
+
+    cell.addEventListener("click", ()=>{
+      if (!$("#planMode").checked) return;
+      const tid=$("#planTopic").value; if (!tid) return;
+      const hhmm=$("#planTime").value;
+      const dstr = ymd(dateObj);
+      toggleFutureForDate(tid, dstr, hhmm);
+    });
+
+    const had = topics.some(t => (t.history||[]).some(h=> {
+      const ts=new Date(h.ts); return ts>=start && ts<end;
+    }));
+    if (had){ curStreak = (lastHadReview && isSameDay(addDays(lastHadReview,1), start)) ? curStreak+1 : 1; lastHadReview = start; }
+    if (curStreak>streak) streak=curStreak;
+  }
+
+  $("#mDue").textContent = due;
+  $("#mLate").textContent = late;
+  $("#statDue").textContent = due;
+  $("#streak").textContent = streak;
+
+  const mStart = new Date(Y,M-1,1), mEnd= addDays(new Date(Y,M-1,days),1);
+  for (const t of topics) done += (t.history||[]).filter(h=>{ const ts=new Date(h.ts); return ts>=mStart && ts<mEnd; }).length;
+  $("#statDone").textContent = done;
+
+  refreshPlanner(); // sync planner’s default ranges to viewed month
+}
+function toggleFutureForDate(topicId, dateStr, hhmm){
+  const t=topicById(topicId); if(!t) return; ensureFields(t);
+  const iso = isoFromDateTime(dateStr, hhmm || t.defaultTime);
+  const idx = t.future.findIndex(x=>x.iso===iso);
+  if (idx>=0) t.future.splice(idx,1); else t.future.push({iso});
+  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
+  save(); renderAll();
+}
+
+/*** Month nav ***/
+$("#prevM").addEventListener("click", ()=>{
+  const [Y,M]=monthPick.value.split("-").map(Number);
+  const prev=new Date(Y, M-2, 1); monthPick.value = ym(prev); renderCalendar();
+});
+$("#nextM").addEventListener("click", ()=>{
+  const [Y,M]=monthPick.value.split("-").map(Number);
+  const next=new Date(Y, M, 1); monthPick.value = ym(next); renderCalendar();
+});
+
+/*** Export / Import ***/
+$("#exportJson").addEventListener("click", ()=>{
+  const blob=new Blob([JSON.stringify({topics},null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=url; a.download="spaced-repetition-backup.json"; a.click(); URL.revokeObjectURL(url);
+});
+document.getElementById("importJson").addEventListener("change",(e)=>{
+  const f=e.target.files?.[0]; if(!f) return;
+  const r=new FileReader(); r.onload=()=>{ try{
+    const data=JSON.parse(r.result); topics = (data.topics||[]).map(t=>({future:[],...t})); save(); renderAll(); alert("Imported");
+  }catch(_){ alert("Invalid JSON") } }; r.readAsText(f);
+});
+
+/*** ICS feed builder + downloads (live subscription support) ***/
+function buildICSFeed(horizonDays = 90) {
+  const lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//SpaceRepetition//EN"];
+  const now = new Date(), horizon = addDays(now, horizonDays);
+  const pushEvent = (uid, when, title, tags=[])=>{
+    const dt = when.toISOString().replace(/[-:]/g,"").split(".")[0]+"Z";
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${uid}`,
+      `DTSTAMP:${new Date().toISOString().replace(/[-:]/g,"").split(".")[0]}Z`,
+      `SUMMARY:Recall – ${title}`,
+      `DESCRIPTION:${tags.join(", ")}`,
+      `DTSTART:${dt}`,
+      `DTEND:${dt}`,
+      "BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:Review","TRIGGER:-PT10M","END:VALARM",
+      "END:VEVENT"
+    );
+  };
+
+  for (const t of topics){
+    ensureFields(t);
+    const auto = new Date(t.dueISO);
+    if (auto >= addDays(now,-1) && auto <= horizon) pushEvent(`auto-${t.id}`, auto, t.title, t.tags||[]);
+    (t.future||[]).forEach((f,i)=>{
+      const d=new Date(f.iso);
+      if (d >= addDays(now,-1) && d <= horizon) pushEvent(`pl-${t.id}-${i}`, d, t.title, ["planned", ...(t.tags||[])]);
+    });
+  }
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+function download(name, text, mime="text/calendar"){
+  const blob=new Blob([text],{type:mime});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Keep your original "Export ICS" behavior (ad-hoc file)
+document.getElementById("exportIcs").addEventListener("click", ()=>{
+  download("sr-planned.ics", buildICSFeed(90));
+});
+
+// NEW: save a stable feed file for subscriptions (upload as feed.ics)
+document.getElementById("saveFeed").addEventListener("click", ()=>{
+  download("feed.ics", buildICSFeed(120)); // 120-day horizon if you prefer
+});
+
+/*** Render all ***/
+function renderAll(){ renderQueue(); renderTopics(); renderCalendar(); }
+function renderQueue(){
+  const q = $("#queue"); q.innerHTML="";
+  const items = (function(){
+    const items=[]; const now=today(), end=addDays(startOfDay(now),1);
+    for (const t of topics){
+      ensureFields(t);
+      if (new Date(t.dueISO) < end) items.push({kind:"auto", t, due:new Date(t.dueISO)});
+      (t.future||[]).forEach((f,idx)=>{ const d=new Date(f.iso); if (d < end) items.push({kind:"manual", t, due:d, index:idx}); });
+    }
+    return items.sort((a,b)=> a.due-b.due);
+  })();
+  $("#dueCount").textContent = items.length;
+  $("#todayStr").textContent = today().toLocaleDateString(undefined,{weekday:"short",year:"numeric",month:"short",day:"numeric"});
+  if(!items.length){ q.innerHTML=`<div class="muted">Nothing due today 🎉</div>`; return; }
+  items.forEach(it=> q.appendChild((function(it){
+    const wrap=document.createElement("div"); wrap.className="queueitem"; 
+    wrap.innerHTML=`<div>
+      <div><b>${it.t.title}</b> <span class="small muted">${it.kind==="manual" ? "planned" : "auto"}</span></div>
+      <div class="small muted">due ${ymdhm(it.due)}</div>
+    </div>
+    <div class="qbtns">
+      <button data-q="0">Again</button>
+      <button data-q="3">Hard</button>
+      <button data-q="4">Good</button>
+      <button data-q="5">Easy</button>
+    </div>`;
+    wrap.querySelectorAll("button").forEach(btn=>{
+      btn.addEventListener("click", ()=> grade(it, +btn.dataset.q));
+    });
+    return wrap;
+  })(it)));
+}
+renderAll();
+</script>
+</body>
+</html>
