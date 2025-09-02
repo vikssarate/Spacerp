@@ -32,7 +32,7 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 .iconbtn{padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:#12162a;color:var(--ink);font-size:12px}
 .iconbtn.small{padding:4px 8px}
 .iconbtn.danger{border-color:var(--bad);color:var(--bad)}
-/* new */
+/* link-like button */
 .linkbtn{background:none;border:none;color:var(--accent);text-decoration:underline;cursor:pointer;padding:0;font:inherit}
 </style>
 </head>
@@ -60,11 +60,8 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
       <input id="tTags"  placeholder="tags (comma)" />
     </div>
     <div class="row">
-      <label class="small muted">Start today?</label>
-      <select id="tStart">
-        <option value="today">Yes</option>
-        <option value="tomorrow">Tomorrow</option>
-      </select>
+      <label class="small muted">Start date</label>
+      <input id="tStartDate" type="date"/>
       <label class="small muted">Default due time</label>
       <input id="tTime" type="time" value="19:00"/>
       <button id="addTopic" class="primary">Add</button>
@@ -137,7 +134,7 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
         <label for="planMode" class="small muted">Plan Mode: tap days on the calendar to toggle a recall for the selected topic at the chosen time</label>
       </div>
 
-      <!-- NEW: Reschedule Mode -->
+      <!-- Reschedule Mode -->
       <div class="row">
         <input type="checkbox" id="reschedMode"/>
         <label for="reschedMode" class="small muted">
@@ -171,7 +168,6 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
         <button id="prevM">◀</button>
         <div id="monthTitle" style="font-weight:700"></div>
         <button id="nextM">▶</button>
-        <!-- NEW: focus chip -->
         <span id="focusChip" class="pill" style="display:none"></span>
       </div>
       <div class="row">
@@ -219,9 +215,16 @@ function ymdhm(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.g
 
 /*** Data model ***/
 // topic: { id, title, tags[], ef, reps, interval, dueISO, lastISO, defaultTime, history[], future[] }
-const SK = "sr.topics.v5";
+const SK = "sr.topics.v6";
 let topics = load();
-function load(){ try{ const t=JSON.parse(localStorage.getItem(SK))||JSON.parse(localStorage.getItem("sr.topics.v4"))||[]; return Array.isArray(t)?t:[] }catch(e){ return [] } }
+function load(){
+  try{
+    const t = JSON.parse(localStorage.getItem(SK))
+           || JSON.parse(localStorage.getItem("sr.topics.v5"))
+           || [];
+    return Array.isArray(t)?t:[];
+  }catch(e){ return [] }
+}
 function save(){ localStorage.setItem(SK, JSON.stringify(topics)) }
 
 const $ = q => document.querySelector(q);
@@ -243,14 +246,14 @@ function nextIntervalSM2(t, q){
 
 /*** Topic helpers ***/
 function ensureFields(t){ t.future = t.future || []; if (!t.defaultTime) t.defaultTime = "19:00"; }
-function addTopic(title, tags, startWhen, defaultTime){
-  const now = today();
-  const firstDate = startWhen==="today" ? now : addDays(now,1);
-  const [hh,mm] = defaultTime.split(":").map(Number);
+
+function addTopic(title, tags, startDateStr, defaultTime){
+  const firstDate = startDateStr ? parseYMD(startDateStr) : today();
+  const [hh,mm] = (defaultTime||"19:00").split(":").map(Number);
   const due = new Date(firstDate); due.setHours(hh,mm,0,0);
   topics.push({
     id: crypto.randomUUID(), title, tags, ef:2.5, reps:0, interval:1,
-    dueISO: due.toISOString(), lastISO: null, defaultTime,
+    dueISO: due.toISOString(), lastISO: null, defaultTime: defaultTime||"19:00",
     history:[], future:[]
   });
   save(); renderAll();
@@ -290,9 +293,11 @@ function updateFocusChip(){
 $("#addTopic").addEventListener("click", ()=>{
   const title=$("#tTitle").value.trim(); if(!title) return;
   const tags=$("#tTags").value.split(",").map(s=>s.trim()).filter(Boolean);
-  addTopic(title, tags, $("#tStart").value, $("#tTime").value);
+  addTopic(title, tags, $("#tStartDate").value, $("#tTime").value);
   $("#tTitle").value=""; $("#tTags").value="";
 });
+/* Prefill start date to today */
+(function(){ const d=document.getElementById("tStartDate"); if(d && !d.value) d.value = ymd(today()); })();
 
 function renderTopics(){
   const box=$("#topics"); box.innerHTML="";
@@ -528,13 +533,12 @@ function renderCalendar(){
       const dstr = ymd(dateObj);
       const hhmm = $("#planTime").value;
 
-      // If reschedule mode and a topic is focused → move its next due
+      // Reschedule (focused topic)
       if ($("#reschedMode").checked && focusTopicId){
         rescheduleDueToDate(focusTopicId, dstr, hhmm);
         return;
       }
-
-      // If plan mode → toggle planned for focused OR selected topic
+      // Plan (focused or selected)
       if ($("#planMode").checked){
         const tid = focusTopicId || $("#planTopic").value; if (!tid) return;
         toggleFutureForDate(tid, dstr, hhmm);
