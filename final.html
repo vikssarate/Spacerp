@@ -32,6 +32,7 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 .iconbtn{padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:#12162a;color:var(--ink);font-size:12px}
 .iconbtn.small{padding:4px 8px}
 .iconbtn.danger{border-color:var(--bad);color:var(--bad)}
+/* link-like button */
 .linkbtn{background:none;border:none;color:var(--accent);text-decoration:underline;cursor:pointer;padding:0;font:inherit}
 </style>
 </head>
@@ -48,7 +49,7 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 </header>
 
 <div class="wrap">
-  <!-- LEFT -->
+  <!-- LEFT: add & today queue -->
   <section class="card">
     <div class="row" style="justify-content:space-between">
       <div><b>Add Topic</b></div>
@@ -80,13 +81,14 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
       </div>
 
       <div class="row">
-        <button id="planThisMonth">Plan this month</button>
-        <button id="planNextMonth">Plan next month</button>
-        <button id="planClear">Clear planned</button>
+        <button id="planThisMonth" title="Add a recall for every calendar day of the current month">Plan this month</button>
+        <button id="planNextMonth"  title="Add a recall for every calendar day of the next month">Plan next month</button>
+        <button id="planClear"      title="Remove all planned recalls for the selected topic">Clear planned</button>
       </div>
 
       <div class="sep"></div>
 
+      <!-- Weekday selection -->
       <div class="small muted">Selected weekdays</div>
       <div class="weekgrid" style="margin:4px 0 6px 0">
         <label><input type="checkbox" class="wd" data-wd="0"> Sun</label>
@@ -129,11 +131,10 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 
       <div class="row">
         <input type="checkbox" id="planMode"/>
-        <label for="planMode" class="small muted">
-          Plan Mode: <b>tap</b> a day to toggle a recall (uses chosen time). <b>Double-tap/long-press</b> to set/edit the time for that date.
-        </label>
+        <label for="planMode" class="small muted">Plan Mode: tap days on the calendar to toggle a recall for the selected topic at the chosen time</label>
       </div>
 
+      <!-- Reschedule Mode -->
       <div class="row">
         <input type="checkbox" id="reschedMode"/>
         <label for="reschedMode" class="small muted">
@@ -160,7 +161,7 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
     </details>
   </section>
 
-  <!-- RIGHT -->
+  <!-- RIGHT: calendar & summary -->
   <section class="card">
     <div class="row" style="justify-content:space-between">
       <div class="row">
@@ -213,6 +214,7 @@ function monthMeta(ymStr){ const [Y,M]=ymStr.split("-").map(Number); const first
 function ymdhm(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}` }
 
 /*** Data model ***/
+// topic: { id, title, tags[], ef, reps, interval, dueISO, lastISO, defaultTime, history[], future[] }
 const SK = "sr.topics.v6";
 let topics = load();
 function load(){
@@ -294,6 +296,7 @@ $("#addTopic").addEventListener("click", ()=>{
   addTopic(title, tags, $("#tStartDate").value, $("#tTime").value);
   $("#tTitle").value=""; $("#tTags").value="";
 });
+/* Prefill start date to today */
 (function(){ const d=document.getElementById("tStartDate"); if(d && !d.value) d.value = ymd(today()); })();
 
 function renderTopics(){
@@ -318,39 +321,7 @@ function renderTopics(){
   }
 }
 
-/*** Planner helpers (per-date controls) ***/
-function isoFromDateTime(dateStr, hhmm){
-  const d=parseYMD(dateStr);
-  const [hh,mm]=(hhmm||"19:00").split(":").map(Number);
-  d.setHours(hh,mm,0,0);
-  return d.toISOString();
-}
-const isoToYMD = iso => ymd(new Date(iso));
-function timeHHMMFromISO(iso){ const d=new Date(iso); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
-function normalizeHHMM(s){
-  const m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(String(s||""));
-  if(!m) return null; let h=+m[1], mnt=+m[2];
-  if (h<0||h>23||mnt<0||mnt>59) return null;
-  return `${pad2(h)}:${pad2(mnt)}`;
-}
-function futureIndexByDate(t, dateStr){
-  return (t.future||[]).findIndex(x => isoToYMD(x.iso)===dateStr);
-}
-function setFutureForDate(topicId, dateStr, hhmm){
-  const t=topicById(topicId); if(!t) return; ensureFields(t);
-  const iso = isoFromDateTime(dateStr, hhmm || t.defaultTime);
-  const idx = futureIndexByDate(t, dateStr);
-  if (idx>=0) t.future[idx].iso = iso; else t.future.push({iso});
-  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
-  save(); renderAll();
-}
-function removeFutureForDate(topicId, dateStr){
-  const t=topicById(topicId); if(!t) return; ensureFields(t);
-  t.future = (t.future||[]).filter(x => isoToYMD(x.iso)!==dateStr);
-  save(); renderAll();
-}
-
-/*** Existing range planners ***/
+/*** Planner ***/
 const monthPick = { value: ym(today()) };
 function planInfoUpdate(){
   const id=$("#planTopic").value;
@@ -363,14 +334,17 @@ function refreshPlanner(){
   sel.innerHTML = topics.map(t=>`<option value="${t.id}">${t.title}</option>`).join("");
   if (topics.length && (!cur || !topics.some(t=>t.id===cur))) sel.value=topics[0]?.id || "";
   else sel.value=cur || "";
+  // lock to focused topic
   if (focusTopicId && topics.some(t=>t.id===focusTopicId)){ sel.value = focusTopicId; sel.disabled = true; }
   else { sel.disabled = false; }
+  // set default dates synced to viewed month
   const {Y,M,days}=monthMeta(monthPick.value);
   const start = new Date(Y,M-1,1), end=new Date(Y,M-1,days);
   if (!$("#rangeStart").value) $("#rangeStart").value = ymd(start);
   if (!$("#rangeEnd").value)   $("#rangeEnd").value   = ymd(end);
   if (!$("#everyStart").value) $("#everyStart").value = ymd(start);
   if (!$("#everyEnd").value)   $("#everyEnd").value   = ymd(end);
+  // default weekdays: Mon-Fri (only on first load)
   document.querySelectorAll('.wd').forEach(cb=>{
     if ([1,2,3,4,5].includes(+cb.dataset.wd) && cb.getAttribute('data-init')!=='1'){ cb.checked = true; cb.setAttribute('data-init','1'); }
   });
@@ -379,6 +353,22 @@ function refreshPlanner(){
 $("#planTopic").addEventListener("change", planInfoUpdate);
 
 function selectedWeekdays(){ return Array.from(document.querySelectorAll(".wd:checked")).map(cb=>+cb.dataset.wd); }
+function isoFromDateTime(dateStr, hhmm){
+  const d=parseYMD(dateStr);
+  const [hh,mm]=(hhmm||"19:00").split(":").map(Number);
+  d.setHours(hh,mm,0,0);
+  return d.toISOString();
+}
+function addFutureDates(topicId, dateStrs, hhmm){
+  const t=topicById(topicId); if(!t) return; ensureFields(t);
+  const set = new Set((t.future||[]).map(x=>x.iso));
+  for (const ds of dateStrs){
+    const iso = isoFromDateTime(ds, hhmm||t.defaultTime);
+    if (!set.has(iso)){ t.future.push({iso}); set.add(iso); }
+  }
+  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
+  save(); renderAll();
+}
 function datesWeekdaysInMonth(ymStr, weekdays){
   const {Y,M,days}=monthMeta(ymStr); const out=[];
   for (let d=1; d<=days; d++){
@@ -405,8 +395,7 @@ $("#planThisMonth").addEventListener("click", ()=>{
   const ymStr = monthPick.value;
   const {Y,M,days}=monthMeta(ymStr);
   const all = Array.from({length:days},(_,i)=> ymd(new Date(Y,M-1,i+1)) );
-  const tid = $("#planTopic").value;
-  addFutureDates(tid, all, $("#planTime").value);
+  addFutureDates($("#planTopic").value, all, $("#planTime").value);
 });
 $("#planNextMonth").addEventListener("click", ()=>{
   const [Y,M]=monthPick.value.split("-").map(Number);
@@ -414,23 +403,12 @@ $("#planNextMonth").addEventListener("click", ()=>{
   const ymStr = ym(next);
   const {Y:YY,M:MM,days}=monthMeta(ymStr);
   const all = Array.from({length:days},(_,i)=> ymd(new Date(YY,MM-1,i+1)) );
-  const tid = $("#planTopic").value;
-  addFutureDates(tid, all, $("#planTime").value);
+  addFutureDates($("#planTopic").value, all, $("#planTime").value);
 });
 $("#planClear").addEventListener("click", ()=>{
   const t=topicById($("#planTopic").value);
   if (t && confirm(`Remove all planned recalls for "${t.title}"?`)){ t.future=[]; save(); renderAll(); }
 });
-function addFutureDates(topicId, dateStrs, hhmm){
-  const t=topicById(topicId); if(!t) return; ensureFields(t);
-  const set = new Set((t.future||[]).map(x=>x.iso));
-  for (const ds of dateStrs){
-    const iso = isoFromDateTime(ds, hhmm||t.defaultTime);
-    if (!set.has(iso)){ t.future.push({iso}); set.add(iso); }
-  }
-  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
-  save(); renderAll();
-}
 
 /*** Weekday planning ***/
 $("#planWeekdaysThis").addEventListener("click", ()=>{
@@ -551,50 +529,20 @@ function renderCalendar(){
     if (dueN>0) due += dueN;
     if (lateN>0) late = lateN;
 
-    /* === NEW: tap to toggle, double-tap/long-press to edit time === */
-    // Single tap: quick toggle
     cell.addEventListener("click", ()=>{
       const dstr = ymd(dateObj);
       const hhmm = $("#planTime").value;
 
-      // Reschedule takes precedence
+      // Reschedule (focused topic)
       if ($("#reschedMode").checked && focusTopicId){
         rescheduleDueToDate(focusTopicId, dstr, hhmm);
         return;
       }
-      // Plan mode: toggle without prompt
+      // Plan (focused or selected)
       if ($("#planMode").checked){
         const tid = focusTopicId || $("#planTopic").value; if (!tid) return;
-        const t = topicById(tid); ensureFields(t);
-        const idx = futureIndexByDate(t, dstr);
-        if (idx >= 0) removeFutureForDate(tid, dstr);
-        else setFutureForDate(tid, dstr, hhmm);
+        toggleFutureForDate(tid, dstr, hhmm);
       }
-    });
-
-    // Double-click / long-press: edit specific time
-    const editTime = ()=>{
-      if (!$("#planMode").checked) return;
-      const tid = focusTopicId || $("#planTopic").value; if (!tid) return;
-      const t = topicById(tid); ensureFields(t);
-      const dstr = ymd(dateObj);
-      const idx = futureIndexByDate(t, dstr);
-      const current = idx>=0 ? timeHHMMFromISO(t.future[idx].iso) : $("#planTime").value;
-      let ans = prompt(`Time for "${t.title}" on ${dstr} (HH:MM). Leave blank to remove.`, current);
-      if (ans===null) return; // cancelled
-      ans = ans.trim();
-      if (ans===""){ removeFutureForDate(tid, dstr); return; }
-      const norm = normalizeHHMM(ans);
-      if (!norm){ alert("Enter time as HH:MM (00–23:00–59)."); return; }
-      setFutureForDate(tid, dstr, norm);
-    };
-    cell.addEventListener("dblclick", editTime);                // desktop
-    let pressTimer;
-    cell.addEventListener("touchstart", ()=>{                   // touch long-press
-      pressTimer = setTimeout(editTime, 500);
-    }, {passive:true});
-    ["touchend","touchmove","touchcancel"].forEach(ev=>{
-      cell.addEventListener(ev, ()=> clearTimeout(pressTimer), {passive:true});
     });
 
     const had = focusedTopics().some(t => (t.history||[]).some(h=> {
@@ -613,8 +561,16 @@ function renderCalendar(){
   for (const t of focusedTopics()) done += (t.history||[]).filter(h=>{ const ts=new Date(h.ts); return ts>=mStart && ts<mEnd; }).length;
   $("#statDone").textContent = done;
 
-  refreshPlanner();
-  updateFocusChip();
+  refreshPlanner();      // sync planner to viewed month and focus
+  updateFocusChip();     // show/refresh the focus chip
+}
+function toggleFutureForDate(topicId, dateStr, hhmm){
+  const t=topicById(topicId); if(!t) return; ensureFields(t);
+  const iso = isoFromDateTime(dateStr, hhmm || t.defaultTime);
+  const idx = t.future.findIndex(x=>x.iso===iso);
+  if (idx>=0) t.future.splice(idx,1); else t.future.push({iso});
+  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
+  save(); renderAll();
 }
 
 /*** Month nav ***/
@@ -675,12 +631,13 @@ function download(filename, text){
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a"); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
 }
+
 $("#exportIcs").addEventListener("click", ()=>{
   const ics = makeIcsLines(90);
   download("sr-planned.ics", ics);
 });
 $("#saveFeed").addEventListener("click", ()=>{
-  const ics = makeIcsLines(180);
+  const ics = makeIcsLines(180); // 6 months for the feed
   download("feed.ics", ics);
 });
 
