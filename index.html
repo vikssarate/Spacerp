@@ -131,7 +131,7 @@ button{cursor:pointer}.primary{background:linear-gradient(180deg,#2f67ff,#2149c8
 
       <div class="row">
         <input type="checkbox" id="planMode"/>
-        <label for="planMode" class="small muted">Plan Mode: tap days on the calendar to toggle a recall for the selected topic at the chosen time</label>
+        <label for="planMode" class="small muted">Plan Mode: tap a day to set/edit a recall time for that date</label>
       </div>
 
       <!-- Reschedule Mode -->
@@ -359,15 +359,42 @@ function isoFromDateTime(dateStr, hhmm){
   d.setHours(hh,mm,0,0);
   return d.toISOString();
 }
-function addFutureDates(topicId, dateStrs, hhmm){
-  const t=topicById(topicId); if(!t) return; ensureFields(t);
-  const set = new Set((t.future||[]).map(x=>x.iso));
-  for (const ds of dateStrs){
-    const iso = isoFromDateTime(ds, hhmm||t.defaultTime);
-    if (!set.has(iso)){ t.future.push({iso}); set.add(iso); }
-  }
+
+/* ===== per-day time helpers ===== */
+function timeHHMMFromISO(iso){
+  const d = new Date(iso);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+function futureIndexByDate(t, dateStr){
+  return (t.future||[]).findIndex(f => ymd(new Date(f.iso)) === dateStr);
+}
+function normalizeHHMM(s){
+  if (!s) return null;
+  const m = String(s).trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h=+m[1], mm=+m[2];
+  if (h<0||h>23||mm<0||mm>59) return null;
+  return `${pad2(h)}:${pad2(mm)}`;
+}
+function setFutureForDate(topicId, dateStr, hhmm){
+  const t = topicById(topicId); if (!t) return; ensureFields(t);
+  const iso = isoFromDateTime(dateStr, hhmm || t.defaultTime);
+  const idx = futureIndexByDate(t, dateStr);
+  if (idx >= 0) t.future[idx].iso = iso;
+  else t.future.push({ iso });
   t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
   save(); renderAll();
+}
+function removeFutureForDate(topicId, dateStr){
+  const t = topicById(topicId); if (!t) return; ensureFields(t);
+  const idx = futureIndexByDate(t, dateStr);
+  if (idx >= 0) t.future.splice(idx, 1);
+  save(); renderAll();
+}
+
+/*** Bulk & ranged planning (now overwrite per date) ***/
+function addFutureDates(topicId, dateStrs, hhmm){
+  for (const ds of dateStrs) setFutureForDate(topicId, ds, hhmm);
 }
 function datesWeekdaysInMonth(ymStr, weekdays){
   const {Y,M,days}=monthMeta(ymStr); const out=[];
@@ -531,17 +558,36 @@ function renderCalendar(){
 
     cell.addEventListener("click", ()=>{
       const dstr = ymd(dateObj);
-      const hhmm = $("#planTime").value;
+      const defaultTime = $("#planTime").value;
 
       // Reschedule (focused topic)
       if ($("#reschedMode").checked && focusTopicId){
-        rescheduleDueToDate(focusTopicId, dstr, hhmm);
+        rescheduleDueToDate(focusTopicId, dstr, defaultTime);
         return;
       }
-      // Plan (focused or selected)
+      // Plan Mode: per-day time editor
       if ($("#planMode").checked){
         const tid = focusTopicId || $("#planTopic").value; if (!tid) return;
-        toggleFutureForDate(tid, dstr, hhmm);
+        const t = topicById(tid); ensureFields(t);
+        const idx = futureIndexByDate(t, dstr);
+
+        if (idx >= 0){
+          const cur = timeHHMMFromISO(t.future[idx].iso);
+          let ans = prompt(`Time for "${t.title}" on ${dstr} (HH:MM). Leave empty to remove.`, cur);
+          if (ans === null) return;
+          ans = ans.trim();
+          if (ans === "") { removeFutureForDate(tid, dstr); return; }
+          const norm = normalizeHHMM(ans);
+          if (!norm){ alert("Enter time as HH:MM (00–23:00–59)"); return; }
+          setFutureForDate(tid, dstr, norm);
+        } else {
+          let ans = prompt(`Time for "${t.title}" on ${dstr} (HH:MM)`, defaultTime);
+          if (ans === null) return;
+          ans = (ans.trim() || defaultTime);
+          const norm = normalizeHHMM(ans);
+          if (!norm){ alert("Enter time as HH:MM (00–23:00–59)"); return; }
+          setFutureForDate(tid, dstr, norm);
+        }
       }
     });
 
@@ -563,14 +609,6 @@ function renderCalendar(){
 
   refreshPlanner();      // sync planner to viewed month and focus
   updateFocusChip();     // show/refresh the focus chip
-}
-function toggleFutureForDate(topicId, dateStr, hhmm){
-  const t=topicById(topicId); if(!t) return; ensureFields(t);
-  const iso = isoFromDateTime(dateStr, hhmm || t.defaultTime);
-  const idx = t.future.findIndex(x=>x.iso===iso);
-  if (idx>=0) t.future.splice(idx,1); else t.future.push({iso});
-  t.future.sort((a,b)=> new Date(a.iso)-new Date(b.iso));
-  save(); renderAll();
 }
 
 /*** Month nav ***/
